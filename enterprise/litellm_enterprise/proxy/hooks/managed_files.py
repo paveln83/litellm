@@ -257,6 +257,14 @@ _UNSAVED_BATCH_NOT_CANCELLED_MESSAGE: Final = (
 )
 
 
+class _UnsavedBatchError(Exception):
+    status_code: Final = 500
+
+    def __init__(self, message: str, litellm_debug_info: str) -> None:
+        super().__init__(message)
+        self.litellm_debug_info: Final = litellm_debug_info
+
+
 @dataclass(frozen=True, slots=True)
 class _DeploymentBatch:
     llm_router: Router
@@ -284,7 +292,9 @@ class _UnroutableBatch:
 
 _UnsavedBatch = _DeploymentBatch | _ModelBatch | _ProviderBatch | _UnroutableBatch
 
-_CANCEL_CREDENTIAL_FIELDS: Final = frozenset(CredentialLiteLLMParams.model_fields)
+_CANCEL_SETTINGS: Final = frozenset(CredentialLiteLLMParams.model_fields) | {"organization"}
+_CANCEL_REQUEST_SETTINGS: Final = frozenset({"organization", "extra_headers"})
+_CANCEL_EXTRA_HEADERS: Final[TypeAdapter[dict[str, str] | None]] = TypeAdapter(dict[str, str] | None)
 
 
 def _hidden_string(hidden_params: Mapping[str, object], key: str) -> str | None:
@@ -335,28 +345,30 @@ def _provider_credentials(
     return MappingProxyType({**data, **team_credentials, **explicit_request_credentials(data)})
 
 
-async def _cancel_at_provider(
-    provider_batch_id: str, custom_llm_provider: str, credentials: Mapping[str, object]
-) -> None:
+def _request_settings(data: Mapping[str, object]) -> Mapping[str, object]:
+    return MappingProxyType({key: value for key, value in data.items() if key in _CANCEL_REQUEST_SETTINGS})
+
+
+async def _cancel_at_provider(provider_batch_id: str, custom_llm_provider: str, settings: Mapping[str, object]) -> None:
     await acancel_batch(
         batch_id=provider_batch_id,
         model=None,
         custom_llm_provider=custom_llm_provider,
         metadata=None,
-        extra_headers=None,
+        extra_headers=_CANCEL_EXTRA_HEADERS.validate_python(settings.get("extra_headers")),
         extra_body=None,
-        **{key: value for key, value in credentials.items() if key in _CANCEL_CREDENTIAL_FIELDS},
+        **{key: value for key, value in settings.items() if key in _CANCEL_SETTINGS},
     )
 
 
-async def _cancel_model_batch(batch: _ModelBatch) -> str | None:
+async def _cancel_model_batch(batch: _ModelBatch, data: Mapping[str, object]) -> str | None:
     credentials: Final[Mapping[str, object] | None] = batch.llm_router.registry().credentials(
         batch.model, form="with_provider"
     )
     custom_llm_provider: Final = None if credentials is None else credentials.get("custom_llm_provider")
     if credentials is None or not isinstance(custom_llm_provider, str):
         return f"no deployment for model {batch.model}"
-    await _cancel_at_provider(batch.provider_batch_id, custom_llm_provider, credentials)
+    await _cancel_at_provider(batch.provider_batch_id, custom_llm_provider, {**data, **credentials})
     return None
 
 
@@ -366,9 +378,11 @@ async def _cancel_unsaved_batch(
     try:
         match batch:
             case _DeploymentBatch():
-                await batch.llm_router.acancel_batch(model=batch.deployment_id, batch_id=batch.provider_batch_id)
+                await batch.llm_router.acancel_batch(
+                    model=batch.deployment_id, batch_id=batch.provider_batch_id, **_request_settings(data)
+                )
             case _ModelBatch():
-                return await _cancel_model_batch(batch)
+                return await _cancel_model_batch(batch, data)
             case _ProviderBatch():
                 await _cancel_at_provider(
                     batch.provider_batch_id,
@@ -390,11 +404,11 @@ async def _unsaved_batch_error(
     user_api_key_dict: UserAPIKeyAuth,
     data: Mapping[str, object],
     error: Exception,
-) -> ProxyException:
+) -> _UnsavedBatchError:
     llm_router: Final = _proxy_llm_router()
     batch: Final = _unsaved_batch(llm_router, provider_batch_id, response_hidden_params)
     cancel_failure: Final = await _cancel_unsaved_batch(batch, llm_router, user_api_key_dict, data)
-    verbose_logger.error(
+    admin_detail: Final = (
         f"LiteLLM could not save batch {sanitize_for_log(batch.provider_batch_id)} of {_unsaved_batch_owner(batch)} "
         f"after the provider created it: {sanitize_for_log(error)}. "
         + (
@@ -403,11 +417,10 @@ async def _unsaved_batch_error(
             else f"It could not cancel the batch at the provider, so cancel it there: {sanitize_for_log(cancel_failure)}"
         )
     )
-    return ProxyException(
-        message=_UNSAVED_BATCH_CANCELLED_MESSAGE if cancel_failure is None else _UNSAVED_BATCH_NOT_CANCELLED_MESSAGE,
-        type="internal_server_error",
-        param=None,
-        code=500,
+    verbose_logger.error(admin_detail)
+    return _UnsavedBatchError(
+        _UNSAVED_BATCH_CANCELLED_MESSAGE if cancel_failure is None else _UNSAVED_BATCH_NOT_CANCELLED_MESSAGE,
+        f"\n{admin_detail}",
     )
 
 
