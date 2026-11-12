@@ -6007,6 +6007,42 @@ async def test_post_call_batch_create_cancels_a_provider_only_batch_with_the_cre
     )
 
 
+def _router_with_another_teams_openai_deployment() -> Router:
+    return Router(
+        model_list=[
+            {
+                "model_name": "team-b-openai",
+                "litellm_params": {"model": "openai/gpt-4o", "api_key": "sk-team-b-key", "api_base": _OTHER_API_BASE},
+                "model_info": {"id": "team-b-openai-deployment", "team_id": "team_b"},
+            },
+        ],
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_respx_sees_provider_calls")
+@respx.mock
+async def test_post_call_batch_create_cancels_a_provider_only_batch_at_its_provider_whatever_model_id_the_request_set():
+    from litellm.proxy._types import ProxyException
+
+    provider_cancel: Final = _provider_batch_cancel_route(200)
+    deployment_cancel: Final = _provider_batch_cancel_route(200, api_base=_OTHER_API_BASE)
+
+    with pytest.raises(ProxyException) as exc_info:
+        await _create_batch_through_hook(
+            _router_with_another_teams_openai_deployment(),
+            RAW_PROVIDER_BATCH_ID,
+            {BATCH_CREATE_PROVIDER_HIDDEN_PARAM: "openai", "model_id": "team-b-openai-deployment"},
+            {**_BATCH_CREATE_REQUEST, "api_key": "sk-request-key", "api_base": _OPENAI_API_BASE},
+        )
+
+    assert (provider_cancel.call_count, deployment_cancel.call_count) == (1, 0)
+    assert provider_cancel.calls.last.request.headers["authorization"] == "Bearer sk-request-key"
+    assert exc_info.value.message == (
+        "LiteLLM could not save the batch, so it cancelled it at the provider. Retry the request."
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_respx_sees_provider_calls")
 @pytest.mark.parametrize(

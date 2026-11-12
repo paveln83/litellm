@@ -300,11 +300,15 @@ def _unsaved_batch(llm_router: Router | None, batch_id: str, hidden_params: Mapp
             if llm_router is None
             else _ModelBatch(llm_router, created_with_model, get_original_file_id(batch_id))
         )
-    model_id: Final = _hidden_string(hidden_params, "model_id")
-    if llm_router is not None and model_id is not None:
-        return _DeploymentBatch(llm_router, model_id, batch_id)
     custom_llm_provider: Final = _hidden_string(hidden_params, BATCH_CREATE_PROVIDER_HIDDEN_PARAM)
-    return _UnroutableBatch(batch_id) if custom_llm_provider is None else _ProviderBatch(custom_llm_provider, batch_id)
+    if custom_llm_provider is not None:
+        return _ProviderBatch(custom_llm_provider, batch_id)
+    model_id: Final = _hidden_string(hidden_params, "model_id")
+    return (
+        _UnroutableBatch(batch_id)
+        if llm_router is None or model_id is None
+        else _DeploymentBatch(llm_router, model_id, batch_id)
+    )
 
 
 def _unsaved_batch_owner(batch: _UnsavedBatch) -> str:
