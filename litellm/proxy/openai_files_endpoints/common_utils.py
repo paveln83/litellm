@@ -51,6 +51,7 @@ FILE_LIST_CONTINUATION_CHUNK_SIZE: Final = 500
 
 BATCH_CREATE_HIDDEN_PARAM: Final = "batch_create"
 BATCH_CREATE_PROVIDER_HIDDEN_PARAM: Final = "batch_create_provider"
+BATCH_CREATE_MODEL_HIDDEN_PARAM: Final = "batch_create_model"
 LITELLM_EXECUTED_BATCH_ID_PREFIX: Final = "litellm_batch_"
 EXPLICIT_CREDENTIAL_KEYS: Final = frozenset({"api_key", "api_base", "litellm_credential_name"})
 

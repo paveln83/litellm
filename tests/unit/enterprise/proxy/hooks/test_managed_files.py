@@ -30,6 +30,7 @@ from litellm.litellm_core_utils.prompt_templates.file_id_utils import get_format
 from litellm.proxy._types import CallTypes, LiteLLM_ManagedFileTable, UserAPIKeyAuth
 from litellm.proxy.openai_files_endpoints.common_utils import (
     BATCH_CREATE_HIDDEN_PARAM,
+    BATCH_CREATE_MODEL_HIDDEN_PARAM,
     BATCH_CREATE_PROVIDER_HIDDEN_PARAM,
     TeamProviderDeployment,
     convert_b64_uid_to_unified_uid,
@@ -5903,7 +5904,7 @@ async def _create_batch_through_hook(
     ("batch_id", "hidden_params"),
     [
         (RAW_PROVIDER_BATCH_ID, {"unified_file_id": "managed-input-file", "model_id": _BATCH_DEPLOYMENT_ID}),
-        (MODEL_ENCODED_BATCH_ID, {}),
+        (MODEL_ENCODED_BATCH_ID, {BATCH_CREATE_MODEL_HIDDEN_PARAM: "gpt-4o-team-alias"}),
     ],
     ids=["managed-input-file", "model-encoded-id"],
 )
@@ -5925,23 +5926,26 @@ async def test_post_call_batch_create_cancels_the_provider_batch_when_its_row_ca
     )
 
 
-_DOWNSTREAM_ENCODED_BATCH_ID: Final = encode_file_id_with_model(
-    RAW_PROVIDER_BATCH_ID, "model-only-the-downstream-proxy-knows", id_type="batch"
-)
-
-
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_respx_sees_provider_calls")
+@pytest.mark.parametrize(
+    "encoded_model",
+    ["model-only-the-downstream-proxy-knows", "other-batch-model"],
+    ids=["model-unknown-here", "model-of-another-deployment"],
+)
 @respx.mock
-async def test_post_call_batch_create_cancels_a_downstream_encoded_batch_on_the_deployment_that_created_it():
+async def test_post_call_batch_create_cancels_an_encoded_provider_batch_id_on_the_deployment_that_created_it(
+    encoded_model: str,
+):
     from litellm.proxy._types import ProxyException
 
-    cancel_route: Final = _provider_batch_cancel_route(200, batch_id=_DOWNSTREAM_ENCODED_BATCH_ID)
+    provider_batch_id: Final = encode_file_id_with_model(RAW_PROVIDER_BATCH_ID, encoded_model, id_type="batch")
+    cancel_route: Final = _provider_batch_cancel_route(200, batch_id=provider_batch_id)
 
     with pytest.raises(ProxyException) as exc_info:
         await _create_batch_through_hook(
             _two_deployment_batch_router(),
-            _DOWNSTREAM_ENCODED_BATCH_ID,
+            provider_batch_id,
             {"unified_file_id": "managed-input-file", "model_id": _BATCH_DEPLOYMENT_ID},
         )
 
@@ -5971,15 +5975,21 @@ def _team_openai_router() -> Router:
     [
         (None, {"api_key": "sk-request-key", "api_base": _OPENAI_API_BASE}, _OPENAI_API_BASE, "Bearer sk-request-key"),
         (_team_openai_router(), {}, _OTHER_API_BASE, "Bearer sk-team-key"),
+        (None, {"api_base": _OTHER_API_BASE}, _OTHER_API_BASE, "Bearer sk-env-key"),
     ],
-    ids=["request-credentials", "team-deployment-credentials"],
+    ids=["request-credentials", "team-deployment-credentials", "request-api-base-with-env-key"],
 )
 @respx.mock
 async def test_post_call_batch_create_cancels_a_provider_only_batch_with_the_credentials_it_was_created_with(
-    llm_router: Router | None, request_credentials: Mapping[str, str], api_base: str, authorization: str
+    llm_router: Router | None,
+    request_credentials: Mapping[str, str],
+    api_base: str,
+    authorization: str,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     from litellm.proxy._types import ProxyException
 
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-key")
     cancel_route: Final = _provider_batch_cancel_route(200, api_base=api_base)
 
     with pytest.raises(ProxyException) as exc_info:
@@ -6004,9 +6014,10 @@ async def test_post_call_batch_create_cancels_a_provider_only_batch_with_the_cre
     [
         (True, {"unified_file_id": "managed-input-file", "model_id": _BATCH_DEPLOYMENT_ID}, 1),
         (True, {}, 0),
+        (True, {BATCH_CREATE_MODEL_HIDDEN_PARAM: "model-not-on-this-proxy"}, 0),
         (False, {"unified_file_id": "managed-input-file", "model_id": _BATCH_DEPLOYMENT_ID}, 0),
     ],
-    ids=["provider-rejects-cancel", "no-deployment-for-batch", "no-router"],
+    ids=["provider-rejects-cancel", "no-deployment-for-batch", "no-deployment-for-model", "no-router"],
 )
 @respx.mock
 async def test_post_call_batch_create_says_the_batch_may_still_run_when_it_cannot_be_cancelled(

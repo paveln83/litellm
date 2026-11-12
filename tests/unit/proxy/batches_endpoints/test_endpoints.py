@@ -1428,6 +1428,47 @@ async def test_create__provider_fallback_cancels_the_provider_batch_when_its_row
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"input_file_id": encode_file_id_with_model("file-plain", "my-vllm")},
+        {"input_file_id": "file-plain", "model": "my-vllm"},
+    ],
+    ids=["model-encoded-file-id", "model-param"],
+)
+@pytest.mark.parametrize(
+    "provider_batch_id",
+    ["batch-provider-id", encode_file_id_with_model("batch-of-another-model", "azure/gpt-4o", id_type="batch")],
+    ids=["plain-id", "id-encoded-with-another-model"],
+)
+async def test_create__model_routed_batch_is_cancelled_on_its_model_when_its_row_cannot_be_saved(
+    harness, body, provider_batch_id
+):
+    from prisma.errors import DataError
+
+    harness.upstream_files_route.respond(200, json={"object": "list", "data": []})
+    set_body(harness, {**body, "endpoint": "/v1/chat/completions", "completion_window": "24h"})
+    harness.litellm_acreate.return_value = make_batch(id=provider_batch_id)
+    prisma_client = install_managed_files_hook(harness)
+    prisma_client.db.litellm_managedobjecttable.upsert.side_effect = DataError(
+        data={"user_facing_error": {"message": "simulated DB write failure"}}
+    )
+    cancel_route = harness.upstream.post(f"{CREDS['my-vllm']['api_base']}/batches/{provider_batch_id}/cancel").respond(
+        200, json=make_batch(id=provider_batch_id, status="cancelling").model_dump()
+    )
+
+    with pytest.raises(ProxyException) as exc:
+        await call_create(harness)
+
+    assert cancel_route.call_count == 1
+    assert cancel_route.calls.last.request.headers["authorization"] == "Bearer sk-vllm"
+    assert (exc.value.code, exc.value.message) == (
+        "500",
+        "LiteLLM could not save the batch, so it cancelled it at the provider. Retry the request.",
+    )
+
+
+@pytest.mark.asyncio
 async def test_create__unified_file_id_registers_ownership_for_creator(harness):
     unified_input_file_id = base64.urlsafe_b64encode(
         b"litellm_proxy:application/octet-stream;unified_id,input-uuid;target_model_names,gpt-4o-mini"

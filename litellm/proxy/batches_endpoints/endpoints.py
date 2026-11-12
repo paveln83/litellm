@@ -49,6 +49,7 @@ from litellm.proxy.common_utils.openai_endpoint_utils import (
 )
 from litellm.proxy.openai_files_endpoints.common_utils import (  # noqa: F401  # legacy module exports
     BATCH_CREATE_HIDDEN_PARAM,
+    BATCH_CREATE_MODEL_HIDDEN_PARAM,
     BATCH_CREATE_PROVIDER_HIDDEN_PARAM,
     _is_base64_encoded_unified_file_id,  # pyright: ignore[reportPrivateUsage,reportUnusedImport]  # backwards-compatible package export
     add_deployment_model_info,
@@ -404,6 +405,7 @@ async def create_batch(
                 custom_llm_provider=credentials["custom_llm_provider"],
                 **_create_batch_data,
             )
+            set_hidden_param(response, BATCH_CREATE_MODEL_HIDDEN_PARAM, model_from_file_id)
 
             # Encode the batch ID and related file IDs with model information
             if response and hasattr(response, "id") and response.id:
@@ -511,6 +513,7 @@ async def create_batch(
                 )
 
                 encode_batch_response_ids(response, model=model_param)
+                set_hidden_param(response, BATCH_CREATE_MODEL_HIDDEN_PARAM, model_param)
 
                 verbose_proxy_logger.debug("Created batch using model: %s", model_param)
             else:
