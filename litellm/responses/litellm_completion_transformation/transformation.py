@@ -1466,7 +1466,7 @@ class LiteLLMCompletionResponsesConfig:
         unrunnable_computer_call: Final = first_unrunnable_computer_call(
             _input_to_read(request_input, not native_compaction, native_compaction)
         )
-        if unrunnable_computer_call is not None:
+        if unrunnable_computer_call is not None and provider_builds_anthropic_request(model, custom_llm_provider):
             raise unrunnable_computer_call
 
         litellm_completion_request: dict = {
