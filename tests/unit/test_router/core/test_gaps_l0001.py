@@ -105,6 +105,15 @@ def test_chat_completions_create_calls_the_router_with_the_default_litellm_param
 
 
 @pytest.mark.asyncio
+async def test_chat_completions_create_answers_async_when_the_router_defaults_set_acompletion(
+    make_core: MakeCore, host: ScriptedHost
+) -> None:
+    core: Final = make_core(model_list=[deployment("g", "a")], default_litellm_params={"acompletion": True})
+    await core.chat.completions.create(model="g", messages=MESSAGES)  # pyright: ignore[reportAttributeAccessIssue]
+    assert [(call.op, call.deployment_id) for call in host.calls] == [("acompletion", "a")]
+
+
+@pytest.mark.asyncio
 async def test_a_provider_budget_config_adds_the_budget_limiter_after_the_listed_checks(make_core: MakeCore) -> None:
     """A provider budget appends ``router_budget_limiting`` to the optional pre-call checks given."""
     core: Final = make_core(

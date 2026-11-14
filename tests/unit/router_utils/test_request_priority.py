@@ -91,6 +91,15 @@ def test_a_priority_named_in_additional_drop_params_at_any_level_is_dropped(monk
     assert request_drops_params({}, {}, (params for params in ({"drop_params": True},))) is True
 
 
+def test_a_deployment_additional_drop_params_list_replaces_the_router_default_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(litellm, "drop_params", False)
+    router_drops_priority: Final = {"additional_drop_params": ["priority"]}
+    assert request_drops_params({}, router_drops_priority, ({"additional_drop_params": ["seed"]},)) is False
+    assert request_drops_params({}, router_drops_priority, ({"model": "openai/gpt-5.4-nano"},)) is True
+
+
 def test_a_request_it_cannot_queue_is_told_why() -> None:
     assert "priority is required" in unqueueable_priority_message(None)
     assert unqueueable_priority_message("high").startswith("priority must be an integer, got str 'high'")

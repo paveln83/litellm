@@ -86,14 +86,12 @@ def request_drops_params(
     router_defaults: Mapping[str, object],
     deployment_params: Iterable[Mapping[str, object]],
 ) -> bool:
-    deployments: Final = tuple(deployment_params)
-    if litellm.drop_params is True or any(_drops_priority_by_name(s) for s in (kwargs, router_defaults, *deployments)):
+    sent: Final = tuple(params_sent_to_deployment(params, router_defaults, {}) for params in deployment_params) or (
+        router_defaults,
+    )
+    if litellm.drop_params is True or any(_drops_priority_by_name(scope) for scope in (kwargs, *sent)):
         return True
     request_flag: Final = _explicit_drop_params(kwargs)
     if request_flag is not None:
         return request_flag
-    if not deployments:
-        return _explicit_drop_params(router_defaults) is True
-    return any(
-        _explicit_drop_params(params_sent_to_deployment(params, router_defaults, {})) is True for params in deployments
-    )
+    return any(_explicit_drop_params(scope) is True for scope in sent)

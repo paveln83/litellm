@@ -15484,16 +15484,14 @@ def _count_options_with_defaults(
     return MappingProxyType(without_dropped_paths({**default_options, **count_options}, additional_drop_params))
 
 
-def _deployment_with_request_drop_settings(
+def _count_deployment(
     deployment: dict[str, object] | None,  # mutable-ok: BaseTokenCounter.count_tokens takes a dict deployment
     sent_params: Mapping[str, object],
 ) -> dict[str, object] | None:  # mutable-ok: BaseTokenCounter.count_tokens takes a dict deployment
+    if deployment is not None:
+        return {**deployment, "litellm_params": {**sent_params}}
     overrides: Final = {name: sent_params[name] for name in _REQUEST_DROP_SETTINGS if sent_params.get(name) is not None}
-    if not overrides:
-        return deployment
-    resolved_deployment: Final = deployment or {}
-    litellm_params: Final = _DEPLOYMENT_LITELLM_PARAMS.validate_python(resolved_deployment.get("litellm_params") or {})
-    return {**resolved_deployment, "litellm_params": {**litellm_params, **overrides}}
+    return {"litellm_params": overrides} if overrides else None
 
 
 def _counted_request_messages(
@@ -16321,7 +16319,7 @@ async def _count_request_tokens(
         router_defaults,
         request_litellm_params,
     )
-    count_deployment: Final = _deployment_with_request_drop_settings(deployment, sent_params)
+    count_deployment: Final = _count_deployment(deployment, sent_params)
     count_litellm_params: Final = _DEPLOYMENT_LITELLM_PARAMS.validate_python(
         (count_deployment or {}).get("litellm_params") or {}
     )

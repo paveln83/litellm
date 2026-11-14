@@ -20744,3 +20744,38 @@ async def test_a_deployment_max_retries_does_not_change_how_often_aembedding_hit
     assert await _provider_hits_for_a_failing_aembedding({"max_retries": 3}) == (
         await _provider_hits_for_a_failing_aembedding({})
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_router_httpx_transport")
+@pytest.mark.parametrize("key", ["headers", "extra_headers"])
+async def test_acompletion_sends_the_router_default_headers_the_deployment_headers_leave_unset(key: str) -> None:
+    router: Final = Router(
+        model_list=[
+            {
+                "model_name": "headed",
+                "litellm_params": {
+                    "model": "openai/gpt-5.4-nano",
+                    "api_key": "sk-unit",
+                    key: {"helicone-auth": "Bearer deployment", "X-Region": "eu"},
+                },
+            }
+        ],
+        default_litellm_params={key: {"Helicone-Auth": "Bearer router", "X-Team": "search"}},
+        num_retries=0,
+    )
+
+    with respx.mock(assert_all_called=True) as upstream:
+        route: Final = upstream.post("https://api.openai.com/v1/chat/completions").respond(
+            json={
+                "id": "chatcmpl-headed",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "gpt-5.4-nano",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}],
+            }
+        )
+        await router.acompletion(model="headed", messages=[{"role": "user", "content": "Say hi"}])
+
+    sent: Final = route.calls.last.request.headers
+    assert (sent["helicone-auth"], sent["x-region"], sent["x-team"]) == ("Bearer deployment", "eu", "search")

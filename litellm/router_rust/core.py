@@ -1671,7 +1671,8 @@ class RustCore(
         if name == "chat":
             from litellm.main import Chat
 
-            self._legacy["chat"] = Chat(params={}, router_obj=self)  # pyright: ignore[reportArgumentType]  # Chat calls the router's endpoints, which this core serves
+            answers_async: Final = self._resolved.default_litellm_params.get("acompletion") is True
+            self._legacy["chat"] = Chat(params={"acompletion": True} if answers_async else {}, router_obj=self)  # pyright: ignore[reportArgumentType]  # Chat calls the router's endpoints, which this core serves
             return self._legacy["chat"]
         return argument_attribute(self._config, name)
 

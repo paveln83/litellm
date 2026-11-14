@@ -32,3 +32,21 @@ def test_params_sent_to_deployment_prefer_the_request_then_the_deployment_then_t
 
     assert {key: merged[key] for key in sent} == sent
     assert "timeout" not in merged
+
+
+@pytest.mark.parametrize("key", ["headers", "extra_headers"])
+def test_router_default_headers_merge_under_the_deployment_headers_by_case_insensitive_name(key: str) -> None:
+    router_defaults: Final = {key: {"Helicone-Auth": "Bearer router", "X-Team": "search"}}
+    deployment: Final = {key: {"helicone-auth": "Bearer deployment", "X-Region": "eu"}}
+
+    sent: Final = params_sent_to_deployment(deployment, router_defaults, {})
+
+    assert sent[key] == {"X-Team": "search", "helicone-auth": "Bearer deployment", "X-Region": "eu"}
+
+
+def test_request_headers_replace_the_merged_router_and_deployment_headers() -> None:
+    sent: Final = params_sent_to_deployment(
+        {"headers": {"X-Region": "eu"}}, {"headers": {"X-Team": "search"}}, {"headers": {"X-Trace": "1"}}
+    )
+
+    assert sent["headers"] == {"X-Trace": "1"}

@@ -4877,6 +4877,40 @@ async def test_call_endpoint_counts_a_prompt_on_a_vertex_ai_deployment(monkeypat
 _FOX: Final = "The quick brown fox jumps over the lazy dog."
 
 
+@pytest.mark.asyncio
+async def test_call_endpoint_counts_in_the_router_default_vertex_location_when_the_deployment_sets_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    router: Final = Router(
+        model_list=[
+            {
+                "model_name": "vertex-unpinned",
+                "litellm_params": {"model": "vertex_ai/claude-sonnet-5-5", "vertex_project": "test-project"},
+            }
+        ],
+        default_litellm_params={"vertex_location": "europe-west1"},
+    )
+    monkeypatch.setattr(litellm.proxy.proxy_server, "llm_router", router)
+    monkeypatch.setattr(litellm, "disable_aiohttp_transport", True)
+
+    with (
+        patch.object(
+            VertexAIPartnerModelsTokenCounter, "_ensure_access_token_async", return_value=("token", "test-project")
+        ),
+        respx.mock,
+    ):
+        route: Final = respx.post(host="europe-west1-aiplatform.googleapis.com").mock(
+            return_value=httpx.Response(200, json={"input_tokens": 9})
+        )
+        counted: Final = await count_request_tokens(
+            request=TokenCountRequest(model="vertex-unpinned", messages=[{"role": "user", "content": _FOX}]),
+            call_endpoint=True,
+        )
+
+    assert route.called
+    assert (counted.error, counted.total_tokens) == (False, 9)
+
+
 _CONVERSATIONS: Final = (
     {"messages": [{"role": "user", "content": _FOX}]},
     {"contents": [{"role": "user", "parts": [{"text": _FOX}]}]},
