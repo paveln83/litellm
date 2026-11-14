@@ -481,6 +481,8 @@ def _valid_header(entry: tuple[object, object]) -> tuple[str, str] | None:
 
 
 def _request_extra_headers(extra_headers: object, drops_params: bool) -> Mapping[str, str]:
+    if not extra_headers:
+        return MappingProxyType({})
     if not drops_params:
         return _EXTRA_HEADERS_ADAPTER.validate_python(extra_headers) or MappingProxyType({})
     return MappingProxyType(

@@ -1992,6 +1992,27 @@ async def test_malformed_extra_headers_is_rejected_before_http(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("api", "request_kwargs"), _PREDICATE_REQUESTS, ids=_PREDICATE_REQUEST_IDS)
+@pytest.mark.parametrize("extra_headers", ("", [], 0, False), ids=("empty_string", "empty_list", "zero", "false"))
+async def test_empty_extra_headers_is_sent_as_no_headers(
+    extra_headers: object,
+    api: str,
+    request_kwargs: Mapping[str, object],
+    respx_mock: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(litellm, "drop_params", False)
+    route: Final = _openai_decisions_route(respx_mock, monkeypatch)
+
+    response: Final = await getattr(litellm, f"a{api}")(
+        model="openai/gpt-6-luna", api_key="caller-key", extra_headers=extra_headers, **request_kwargs
+    )
+
+    assert route.called
+    assert response.answers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("api", "request_kwargs"), _PREDICATE_REQUESTS, ids=_PREDICATE_REQUEST_IDS)
 @pytest.mark.parametrize("extra_headers", _MALFORMED_EXTRA_HEADERS, ids=_MALFORMED_EXTRA_HEADERS_IDS)
 async def test_malformed_extra_headers_is_dropped_under_drop_params(
     extra_headers: object,
