@@ -1,11 +1,12 @@
 import re
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from http import HTTPStatus
 from typing import Final, Protocol, TypeVar
 
 from pydantic import TypeAdapter, ValidationError
 
 from litellm._logging import verbose_proxy_logger
+from litellm.litellm_core_utils.core_helpers import require_attributes
 from litellm.proxy._types import (
     DB_CONNECTION_ERROR_TYPES,
     DB_RETRY_SAFE_ERROR_TYPES,
@@ -53,6 +54,7 @@ _PRISMA_POOL_TIMEOUT_CODE: Final = "P2024"
 _LOCK_TIMEOUT_SQLSTATE: Final = "55P03"
 _LOCK_TIMEOUT_PHRASE: Final = "canceling statement due to lock timeout"
 _STATEMENT_TIMEOUT_SQLSTATE: Final = "57014"
+_REJECTED_ROW_SQLSTATE_CLASSES: Final = frozenset({"22", "23", "54"})
 _STATEMENT_TIMEOUT_PHRASE: Final = "canceling statement due to statement timeout"
 
 
@@ -90,6 +92,28 @@ def _exception_types(*candidates: object) -> tuple[type[BaseException], ...]:
     False. Dropping the non-types lets the call fall through to the other checks.
     """
     return tuple(c for c in candidates if isinstance(c, type) and issubclass(c, BaseException))
+
+
+class _CodedError(Protocol):
+    @property
+    def code(self) -> object: ...
+
+
+def _error_code(error: _CodedError) -> object:
+    return error.code
+
+
+class _FrameGlobals(Protocol):
+    @property
+    def f_globals(self) -> Mapping[str, object]: ...
+
+
+class _PrefixMatchable(Protocol):
+    def startswith(self, prefix: str, /) -> bool: ...
+
+
+def _frame_module_name(frame: _FrameGlobals) -> _PrefixMatchable:
+    return require_attributes(frame.f_globals.get("__name__", ""), _PrefixMatchable, "startswith")
 
 
 def _prisma_error_code(e: Exception) -> str | None:
@@ -222,6 +246,20 @@ class PrismaDBExceptionHandler:
         return type(e) is prisma.errors.DataError
 
     @staticmethod
+    def is_rejected_row_error(e: Exception) -> bool:
+        """True iff Postgres refused the rows themselves: a base ``DataError``, or a raw query failing with a data
+        exception (SQLSTATE class 22), integrity violation (class 23) or a value too large for an index (class 54). Systemic raw failures such as a missing
+        table (42P01) or a deadlock (40P01) stay False so the batch is retried instead of dropped."""
+        import prisma
+
+        if PrismaDBExceptionHandler.is_prisma_data_error(e):
+            return True
+        if not isinstance(e, _exception_types(prisma.errors.RawQueryError)):
+            return False
+        sqlstate: Final = PrismaDBExceptionHandler.postgres_sqlstate(e)
+        return sqlstate is not None and sqlstate[:2] in _REJECTED_ROW_SQLSTATE_CLASSES
+
+    @staticmethod
     def is_database_transport_error(e: Exception) -> bool:
         """
         Returns True only for transport/connectivity failures where a reconnect
@@ -302,7 +340,7 @@ class PrismaDBExceptionHandler:
 
         if not isinstance(e, _exception_types(prisma.errors.PrismaError)):
             return False
-        if isinstance(e, prisma.errors.DataError) and e.code == _PRISMA_POOL_TIMEOUT_CODE:
+        if isinstance(e, prisma.errors.DataError) and _error_code(e) == _PRISMA_POOL_TIMEOUT_CODE:
             return True
         if PrismaDBExceptionHandler.postgres_sqlstate(e) == "53300":
             return True
@@ -418,7 +456,7 @@ class PrismaDBExceptionHandler:
             return False
         tb = e.__traceback__ if hasattr(e, "__traceback__") else None
         while tb is not None:
-            if tb.tb_frame.f_globals.get("__name__", "").startswith("prisma.engine"):
+            if _frame_module_name(tb.tb_frame).startswith("prisma.engine"):
                 return True
             tb = tb.tb_next
         return False
@@ -738,8 +776,17 @@ def db_write_failure_is_requeue_safe(e: Exception) -> bool:
 
 
 def db_write_never_sent(e: Exception) -> bool:
-    """Whether the database could not take the write at all, because it was unreachable (P1001),
-    refusing connections (57P03) or full (53300, P2024), so even a non-idempotent write can be sent again."""
+    """Whether the database could not take the write at all, because the client had no query engine to send it
+    to (ClientNotConnectedError, NotConnectedError, ConnectError), it was unreachable (P1001), refusing connections
+    (57P03) or full (53300, P2024), so even a non-idempotent write can be sent again."""
+    import prisma
+    import prisma.engine.errors
+
+    unsent_types: Final = _exception_types(
+        prisma.errors.ClientNotConnectedError, prisma.engine.errors.NotConnectedError
+    )
+    if isinstance(e, (*DB_RETRY_SAFE_ERROR_TYPES, *unsent_types)):
+        return True
     if PrismaDBExceptionHandler.is_database_not_accepting_connections_error(e):
         return True
     if PrismaDBExceptionHandler.is_database_capacity_error(e):
