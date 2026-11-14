@@ -1491,6 +1491,32 @@ def test_responses_code_interpreter_setting_claude_lacks_answers_400_or_drops_on
 
 
 _CODE_INTERPRETER: Final = {"type": "code_interpreter", "container": {"type": "auto"}}
+
+
+@pytest.mark.parametrize("drop_params", [False, True])
+@pytest.mark.parametrize("hosted_tool", [_CODE_INTERPRETER, _COMPUTER_USE_PREVIEW], ids=lambda tool: tool["type"])
+def test_responses_tool_choice_forcing_a_hosted_tool_answers_400_naming_it_even_under_drop_params(
+    respx_mock: respx.MockRouter, hosted_tool: Mapping[str, object], drop_params: bool
+) -> None:
+    route: Final = respx_mock.post(_ANTHROPIC_MESSAGES_URL).mock(
+        return_value=_anthropic_message({"type": "text", "text": "ok"})
+    )
+
+    with pytest.raises(litellm.BadRequestError) as rejected:
+        litellm.responses(
+            model=_MODEL,
+            input="Use the tool.",
+            tools=[hosted_tool],
+            tool_choice={"type": hosted_tool["type"]},
+            drop_params=drop_params,
+            api_key="mock_api_key",
+        )
+
+    assert rejected.value.status_code == 400
+    assert f"tool_choice type '{hosted_tool['type']}'" in str(rejected.value)
+    assert route.call_count == 0
+
+
 _OPENAI_STREAM_EVENT: Final = TypeAdapter(ResponseStreamEvent)
 _CODE_EXECUTION_USE: Final = {
     "type": "server_tool_use",

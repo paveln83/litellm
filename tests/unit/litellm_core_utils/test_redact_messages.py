@@ -433,6 +433,35 @@ def test_redaction_hides_typed_text_in_a_computer_call_in_responses_api_output(s
 
 
 @pytest.mark.parametrize("shape", ["object", "dict"])
+def test_redaction_hides_the_code_and_outputs_of_a_code_interpreter_call_in_responses_api_output(shape: str) -> None:
+    response: Final = ResponsesAPIResponse(
+        id="resp_1",
+        created_at=1,
+        model="claude-sonnet-5-5",
+        object="response",
+        status="completed",
+        output=[
+            {
+                "type": "code_interpreter_call",
+                "id": "ci_1",
+                "container_id": "cntr_1",
+                "code": f"print('{SECRET}')",
+                "outputs": [{"type": "logs", "logs": SECRET}],
+                "status": "completed",
+            }
+        ],
+    )
+    result: Final = response if shape == "object" else response.model_dump()
+
+    redacted: Final = perform_redaction({}, result)
+
+    item: Final = redacted.output[0] if shape == "object" else redacted["output"][0]
+    fields: Final = item.model_dump() if shape == "object" else item
+    assert (fields["id"], fields["code"], fields["outputs"]) == ("ci_1", REDACTED_BY_LITELLM, None)
+    assert SECRET in str(result)
+
+
+@pytest.mark.parametrize("shape", ["object", "dict"])
 def test_redaction_hides_a_compaction_summary_in_responses_api_output(shape: str) -> None:
     response: Final = ResponsesAPIResponse(
         id="resp_1",

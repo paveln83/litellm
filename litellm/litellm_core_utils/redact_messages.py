@@ -434,6 +434,9 @@ def _redact_responses_api_output(output_items):
             output_item.arguments = REDACTED_BY_LITELLM
         if output_type == "custom_tool_call" and hasattr(output_item, "input"):
             output_item.input = REDACTED_BY_LITELLM
+        if output_type == "code_interpreter_call":
+            _redact_field_when_present(output_item, "code")
+            _drop_field_when_present(output_item, "outputs")
         _redact_action_when_present(output_item, output_type)
 
 
@@ -489,7 +492,17 @@ def _redacted_responses_api_output_item(item: object, redacted_str: str) -> obje
             if item_mapping.get("type") == "custom_tool_call" and "input" in item_mapping
             else {}
         ),
+        **_redacted_code_interpreter_fields(item_mapping, redacted_str),
         **_redacted_action_field(item_mapping),
+    }
+
+
+def _redacted_code_interpreter_fields(item_mapping: Mapping[str, object], redacted_str: str) -> Mapping[str, object]:
+    if item_mapping.get("type") != "code_interpreter_call":
+        return {}
+    return {
+        **({"code": redacted_str} if item_mapping.get("code") is not None else {}),
+        **({"outputs": None} if item_mapping.get("outputs") is not None else {}),
     }
 
 
