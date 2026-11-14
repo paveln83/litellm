@@ -20594,6 +20594,47 @@ async def test_acompletion_calls_the_deployment_region_over_a_conflicting_router
     assert _called_regions(route) == [called_region]
 
 
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_router_httpx_transport")
+async def test_acompletion_calls_the_region_of_the_deployment_credential_over_a_conflicting_router_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        litellm,
+        "credential_list",
+        [
+            CredentialItem(
+                credential_name="eu-bedrock",
+                credential_info={"custom_llm_provider": "bedrock"},
+                credential_values={
+                    "aws_access_key_id": "unit-access-key",
+                    "aws_secret_access_key": "unit-secret-key",
+                    "aws_region_name": "eu-west-1",
+                },
+            )
+        ],
+    )
+    router: Final = Router(
+        model_list=[
+            {
+                "model_name": "regional",
+                "litellm_params": {
+                    "model": "bedrock/converse/anthropic.claude-haiku-5-5",
+                    "litellm_credential_name": "eu-bedrock",
+                },
+            }
+        ],
+        default_litellm_params={"aws_region_name": _ROUTER_DEFAULT_REGION},
+        num_retries=0,
+    )
+
+    with respx.mock(assert_all_called=True) as upstream:
+        route: Final = upstream.post(url__regex=_BEDROCK_URL).respond(json=_BEDROCK_CONVERSE_REPLY)
+        await router.acompletion(model="regional", messages=[{"role": "user", "content": "Say hi"}])
+
+    assert _called_regions(route) == ["eu-west-1"]
+
+
 @_REGION_PRECEDENCE
 def test_text_completion_calls_the_deployment_region_over_a_conflicting_router_default(
     deployment_region: str | None, request_region: str | None, called_region: str

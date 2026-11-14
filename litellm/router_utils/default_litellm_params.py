@@ -3,6 +3,7 @@ from types import MappingProxyType
 from typing import Final
 
 from litellm.types.router import LiteLLM_Params
+from litellm.utils import with_named_credential
 
 _ROUTER_OWNED_LITELLM_PARAMS: Final = frozenset({"max_retries"})
 
@@ -15,22 +16,27 @@ def deployment_sets_litellm_param(deployment_params: Mapping[str, object], key: 
     return field is None or value != field.default  # pyright: ignore[reportAny]  # pydantic types FieldInfo.default as Any
 
 
-def router_defaults_for_deployment(
-    router_defaults: Mapping[str, object], deployment_params: Mapping[str, object]
+def _router_defaults_left_unset(
+    router_defaults: Mapping[str, object], configured: Mapping[str, object]
 ) -> Mapping[str, object]:
     return MappingProxyType(
         {
             key: value
             for key, value in router_defaults.items()
             if value is not None
-            and (key in _ROUTER_OWNED_LITELLM_PARAMS or not deployment_sets_litellm_param(deployment_params, key))
+            and (key in _ROUTER_OWNED_LITELLM_PARAMS or not deployment_sets_litellm_param(configured, key))
         }
     )
+
+
+def router_defaults_for_deployment(
+    router_defaults: Mapping[str, object], deployment_params: Mapping[str, object]
+) -> Mapping[str, object]:
+    return _router_defaults_left_unset(router_defaults, with_named_credential(deployment_params))
 
 
 def params_sent_to_deployment(
     deployment_params: Mapping[str, object], router_defaults: Mapping[str, object], request: Mapping[str, object]
 ) -> Mapping[str, object]:
-    return MappingProxyType(
-        {**deployment_params, **router_defaults_for_deployment(router_defaults, deployment_params), **request}
-    )
+    configured: Final = with_named_credential(deployment_params)
+    return MappingProxyType({**configured, **_router_defaults_left_unset(router_defaults, configured), **request})
