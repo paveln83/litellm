@@ -44,6 +44,19 @@ def test_router_default_headers_merge_under_the_deployment_headers_by_case_insen
     assert sent[key] == {"X-Team": "search", "helicone-auth": "Bearer deployment", "X-Region": "eu"}
 
 
+@pytest.mark.parametrize(("router_key", "deployment_key"), [("extra_headers", "headers"), ("headers", "extra_headers")])
+def test_a_deployment_header_beats_a_router_default_header_of_the_same_name_under_the_other_key(
+    router_key: str, deployment_key: str
+) -> None:
+    router_defaults: Final = {router_key: {"X-Owner": "router", "X-Team": "search"}}
+    deployment: Final = {deployment_key: {"x-owner": "deployment"}}
+
+    sent: Final = params_sent_to_deployment(deployment, router_defaults, {})
+
+    assert sent[router_key] == {"X-Team": "search"}
+    assert sent[deployment_key] == {"x-owner": "deployment"}
+
+
 def test_request_headers_replace_the_merged_router_and_deployment_headers() -> None:
     sent: Final = params_sent_to_deployment(
         {"headers": {"X-Region": "eu"}}, {"headers": {"X-Team": "search"}}, {"headers": {"X-Trace": "1"}}

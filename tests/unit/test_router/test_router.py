@@ -20748,8 +20748,13 @@ async def test_a_deployment_max_retries_does_not_change_how_often_aembedding_hit
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_router_httpx_transport")
-@pytest.mark.parametrize("key", ["headers", "extra_headers"])
-async def test_acompletion_sends_the_router_default_headers_the_deployment_headers_leave_unset(key: str) -> None:
+@pytest.mark.parametrize(
+    ("router_key", "deployment_key"),
+    [("headers", "headers"), ("extra_headers", "extra_headers"), ("extra_headers", "headers"), ("headers", "extra_headers")],
+)
+async def test_acompletion_sends_the_router_default_headers_the_deployment_headers_leave_unset(
+    router_key: str, deployment_key: str
+) -> None:
     router: Final = Router(
         model_list=[
             {
@@ -20757,11 +20762,11 @@ async def test_acompletion_sends_the_router_default_headers_the_deployment_heade
                 "litellm_params": {
                     "model": "openai/gpt-5.4-nano",
                     "api_key": "sk-unit",
-                    key: {"helicone-auth": "Bearer deployment", "X-Region": "eu"},
+                    deployment_key: {"helicone-auth": "Bearer deployment", "X-Region": "eu"},
                 },
             }
         ],
-        default_litellm_params={key: {"Helicone-Auth": "Bearer router", "X-Team": "search"}},
+        default_litellm_params={router_key: {"Helicone-Auth": "Bearer router", "X-Team": "search"}},
         num_retries=0,
     )
 

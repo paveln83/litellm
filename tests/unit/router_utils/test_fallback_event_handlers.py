@@ -243,7 +243,7 @@ _EARLIER_FAILURE_MARKER: Final = datetime(2026, 1, 1)
 _FINAL_HOP_FAILURE_MARKER: Final = datetime(2026, 1, 3)
 
 
-def _entra_fallback_router() -> Router:
+def _entra_fallback_router(router_defaults: Mapping[str, object]) -> Router:
     return Router(
         model_list=[
             {
@@ -260,6 +260,7 @@ def _entra_fallback_router() -> Router:
             }
             for index in (1, 2)
         ],
+        default_litellm_params=dict(router_defaults),
         num_retries=0,
     )
 
@@ -279,16 +280,22 @@ def _raised_from_an_entra_rejection(failed_deployment_id: str) -> litellm.Authen
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("call_params", "cooled_down"),
+    ("call_params", "router_defaults", "cooled_down"),
     [
-        pytest.param({"client_secret": "not-the-credential"}, [], id="caller-secret"),
-        pytest.param({"client_secret": "configured-secret"}, ["fallback-dep-1"], id="deployment-secret"),
+        pytest.param({"client_secret": "not-the-credential"}, {}, [], id="caller-secret"),
+        pytest.param({"client_secret": "configured-secret"}, {}, ["fallback-dep-1"], id="deployment-secret"),
+        pytest.param(
+            {"client_secret": "configured-secret"},
+            {"client_secret": "router-default-secret"},
+            ["fallback-dep-1"],
+            id="deployment-secret-over-router-default",
+        ),
     ],
 )
 async def test_fallback_hop_cools_down_only_a_deployment_entra_rejected_its_own_credential(
-    call_params: Mapping[str, object], cooled_down: list[str]
+    call_params: Mapping[str, object], router_defaults: Mapping[str, object], cooled_down: list[str]
 ) -> None:
-    router: Final = _entra_fallback_router()
+    router: Final = _entra_fallback_router(router_defaults)
 
     _trigger_cooldown_for_failed_deployment(
         ctx=RoutingContext(router),
