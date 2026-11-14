@@ -101,7 +101,7 @@ _ASSETS_ADAPTER: Final[TypeAdapter[DecisionsAssets | None]] = TypeAdapter(
 _ASSET_ENTRY_ADAPTER: Final[TypeAdapter[tuple[DecisionsAssetReference, DecisionsAsset]]] = TypeAdapter(
     tuple[DecisionsAssetReference, DecisionsAsset]
 )
-_MAPPING_ENTRIES_ADAPTER: Final[TypeAdapter[Mapping[str, object]]] = TypeAdapter(Mapping[str, object])
+_MAPPING_ENTRIES_ADAPTER: Final[TypeAdapter[Mapping[object, object]]] = TypeAdapter(Mapping[object, object])
 
 
 def _valid_image(image: object) -> DecisionsImage | None:
@@ -126,14 +126,14 @@ def _no_image(_image: DecisionsImage) -> bool:
     return False
 
 
-def _valid_asset(entry: tuple[str, object]) -> tuple[str, DecisionsAsset] | None:
+def _valid_asset(entry: tuple[object, object]) -> tuple[str, DecisionsAsset] | None:
     try:
         return _ASSET_ENTRY_ADAPTER.validate_python(entry)
     except ValidationError:
         return None
 
 
-def _mapping_entries(value: object) -> Mapping[str, object]:
+def _mapping_entries(value: object) -> Mapping[object, object]:
     try:
         return _MAPPING_ENTRIES_ADAPTER.validate_python(value)
     except ValidationError:
@@ -473,7 +473,7 @@ def _provider_ir_request(
     return supported
 
 
-def _valid_header(entry: tuple[str, object]) -> tuple[str, str] | None:
+def _valid_header(entry: tuple[object, object]) -> tuple[str, str] | None:
     try:
         return _HEADER_ADAPTER.validate_python(entry)
     except ValidationError:

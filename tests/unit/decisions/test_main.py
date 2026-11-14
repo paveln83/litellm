@@ -2018,8 +2018,18 @@ async def test_malformed_extra_headers_is_dropped_under_drop_params(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("api", "request_kwargs"), _PREDICATE_REQUESTS, ids=_PREDICATE_REQUEST_IDS)
+@pytest.mark.parametrize(
+    ("extra_headers", "dropped_header"),
+    (({"X-Kept": "yes", "X-Bad": 1}, "x-bad"), ({"X-Kept": "yes", 1: "x-bad"}, "1")),
+    ids=("non_string_value", "non_string_name"),
+)
 async def test_drop_params_keeps_the_well_formed_extra_headers(
-    api: str, request_kwargs: Mapping[str, object], respx_mock: respx.MockRouter, monkeypatch: pytest.MonkeyPatch
+    extra_headers: Mapping[object, object],
+    dropped_header: str,
+    api: str,
+    request_kwargs: Mapping[str, object],
+    respx_mock: respx.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(litellm, "drop_params", True)
     route: Final = _openai_decisions_route(respx_mock, monkeypatch)
@@ -2027,13 +2037,13 @@ async def test_drop_params_keeps_the_well_formed_extra_headers(
     await getattr(litellm, f"a{api}")(
         model="openai/gpt-6-luna",
         api_key="caller-key",
-        extra_headers={"X-Kept": "yes", "X-Bad": 1},
+        extra_headers=extra_headers,
         **request_kwargs,
     )
 
     sent: Final = route.calls.last.request.headers
     assert sent["x-kept"] == "yes"
-    assert "x-bad" not in sent
+    assert dropped_header not in sent
 
 
 _CLOUDFLARE_RUN_URL: Final = "https://api.cloudflare.com/client/v4/accounts/acct/ai/run/@cf/cloudflare"
