@@ -1006,7 +1006,7 @@ async def test_listing_fine_tuning_jobs_does_not_keep_its_deployment_busy(
     assert _router_pick(router) == _called_deployment(route)
 
 
-TEXT_GROUP: Final = "openai/least-busy-text-group"
+TEXT_GROUP: Final = "least-busy-text-group"
 
 
 @pytest.mark.parametrize("call_identity", _CALL_IDENTITIES)
@@ -1014,18 +1014,8 @@ def test_a_sync_text_completion_does_not_keep_its_deployment_busy(
     call_identity: dict[str, str], respx_mock: respx.MockRouter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(litellm, "disable_aiohttp_transport", True)
-    route: Final = respx_mock.post("https://api.openai.com/v1/completions").mock(
-        return_value=httpx.Response(
-            200,
-            json={
-                "id": "cmpl-least-busy",
-                "object": "text_completion",
-                "created": 1,
-                "model": "least-busy-text-group",
-                "choices": [{"text": "ok", "index": 0, "finish_reason": "stop", "logprobs": None}],
-                "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
-            },
-        )
+    route: Final = respx_mock.post("https://api.openai.com/v1/chat/completions").mock(
+        return_value=httpx.Response(200, json=_CHAT_REPLY)
     )
     router: Final = _least_busy_router(TEXT_GROUP)
 

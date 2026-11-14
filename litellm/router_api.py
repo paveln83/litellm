@@ -359,6 +359,16 @@ def deployment_metadata(request_kwargs: Mapping[str, object]) -> Mapping[str, ob
     return find_deployment_metadata(request_kwargs)
 
 
+def params_sent_to_deployment(
+    deployment_params: Mapping[str, object], router_defaults: Mapping[str, object], request: Mapping[str, object]
+) -> Mapping[str, object]:
+    """The params a deployment is called with: the request, then the deployment's own params and named
+    credential, then the router defaults it leaves unset."""
+    from litellm.router_utils.default_litellm_params import params_sent_to_deployment as sent
+
+    return sent(deployment_params, router_defaults, request)
+
+
 def _json_default_stable_id(obj: object) -> str:
     from litellm.router_rust.steps.prerouting import _json_default_stable_id as stable_id
 
@@ -2032,4 +2042,5 @@ __all__ = [
     "RoutingContext",
     "RoutingObservers",
     "deployment_id",
+    "params_sent_to_deployment",
 ]

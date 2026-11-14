@@ -191,9 +191,8 @@ from litellm.proxy.utils import (  # noqa: F401  # legacy module exports
 from litellm.responses.mcp.parked_stream_dispatch import in_flight_round_biller, parked_success
 from litellm.responses.streaming_iterator import partial_responses_incomplete_event_on_disconnect, spawn_logging_task
 from litellm.router import Router
-from litellm.router_api import RoutingContext
+from litellm.router_api import RoutingContext, params_sent_to_deployment
 from litellm.router_strategy.auto_router.auto_router_model_naming import AUTO_ROUTER_MODEL_PREFIX
-from litellm.router_utils.default_litellm_params import params_sent_to_deployment
 from litellm.types.extraction import ExtractionResponse
 from litellm.types.guardrails import GuardrailEventHooks
 from litellm.types.router import RouterRateLimitError
