@@ -8,10 +8,11 @@ from types import MappingProxyType
 from typing import Final, Literal, Protocol
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, RootModel, TypeAdapter, ValidationError, with_config
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, RootModel, TypeAdapter, ValidationError, with_config
 from typing_extensions import ReadOnly, Required, TypedDict
 
 from litellm import verbose_logger
+from litellm.constants import AWS_ERROR_TYPE_HEADER
 from litellm.llms.base_llm.chat.transformation import BaseLLMException
 from litellm.llms.custom_httpx.http_handler import MaskedHTTPStatusError
 from litellm.types.utils import GenericStreamingChunk as GChunk
@@ -209,6 +210,7 @@ def with_inference_component_hint(error_message: str, call: Literal["completion"
 
 class _ClientErrorBody(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
+    code: str | None = Field(default=None, alias="Code")
     message: str | None = Field(default=None, alias="Message")
 
 
@@ -221,14 +223,47 @@ class _ClientErrorResponse(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
     error: _ClientErrorBody = Field(default_factory=_ClientErrorBody, alias="Error")
     response_metadata: _ClientErrorMetadata = Field(default_factory=_ClientErrorMetadata, alias="ResponseMetadata")
+    original_status_code: int | None = Field(default=None, alias="OriginalStatusCode")
+
+
+class _HttpErrorBody(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True, hide_input_in_errors=True)
+    message: str | None = Field(default=None, validation_alias=AliasChoices("Message", "message"))
+    original_status_code: int | None = Field(default=None, validation_alias="OriginalStatusCode")
+
+
+def _caller_status(status_code: int, error_type: str | None, original_status_code: int | None) -> int:
+    match error_type:
+        case "ThrottlingException":
+            return 429
+        case "ModelError" if original_status_code is not None and httpx.codes.is_error(original_status_code):
+            return original_status_code
+        case "ModelError":
+            return 500
+        case _:
+            return status_code
+
+
+def _http_error_body(body: str) -> _HttpErrorBody:
+    try:
+        return _HttpErrorBody.model_validate_json(body)
+    except ValidationError:
+        return _HttpErrorBody()
+
+
+def _http_error_status(response: httpx.Response, original_status_code: int | None) -> int:
+    error_types: Final = response.headers.get_list(AWS_ERROR_TYPE_HEADER)
+    error_type: Final = error_types[0].partition(":")[0] if error_types else None
+    return _caller_status(response.status_code, error_type, original_status_code)
 
 
 def client_error_details(error: Exception) -> tuple[int, str]:
     match error:
         case MaskedHTTPStatusError(text=str() as masked_body) if masked_body:
-            return error.response.status_code, masked_body
+            body: Final = _http_error_body(masked_body)
+            return _http_error_status(error.response, body.original_status_code), body.message or masked_body
         case httpx.HTTPStatusError():
-            return error.response.status_code, str(error)
+            return _http_error_status(error.response, None), str(error)
         case _:
             return _boto_client_error_details(error)
 
@@ -238,7 +273,10 @@ def _boto_client_error_details(error: Exception) -> tuple[int, str]:
         response: Final = _ClientErrorResponse.model_validate(getattr(error, "response", None))
     except ValidationError:
         return 500, str(error)
-    return response.response_metadata.http_status_code, response.error.message or str(error)
+    status_code: Final = _caller_status(
+        response.response_metadata.http_status_code, response.error.code, response.original_status_code
+    )
+    return status_code, response.error.message or str(error)
 
 
 class _EventStreamMessage(Protocol):

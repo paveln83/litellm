@@ -709,6 +709,7 @@ HTTPX_STATUS_ERROR = httpx.HTTPStatusError(
 )
 MASKED_STATUS_ERROR = MaskedHTTPStatusError(HTTPX_STATUS_ERROR, message="masked body", text='{"message": "bad input"}')
 EMPTY_MASKED_STATUS_ERROR = MaskedHTTPStatusError(HTTPX_STATUS_ERROR, message="", text="")
+PLAIN_TEXT_MASKED_STATUS_ERROR = MaskedHTTPStatusError(HTTPX_STATUS_ERROR, text="upstream gateway error")
 PLAIN_ERROR = RuntimeError("plain failure")
 
 
@@ -729,10 +730,57 @@ PLAIN_ERROR = RuntimeError("plain failure")
         (NULL_MESSAGE_ERROR, 500, str(NULL_MESSAGE_ERROR)),
         (DROPPED_CONNECTION_ERROR, 500, str(DROPPED_CONNECTION_ERROR)),
         (HTTPX_STATUS_ERROR, 400, str(HTTPX_STATUS_ERROR)),
-        (MASKED_STATUS_ERROR, 400, '{"message": "bad input"}'),
+        (MASKED_STATUS_ERROR, 400, "bad input"),
+        (PLAIN_TEXT_MASKED_STATUS_ERROR, 400, "upstream gateway error"),
         (EMPTY_MASKED_STATUS_ERROR, 400, str(EMPTY_MASKED_STATUS_ERROR)),
         (PLAIN_ERROR, 500, str(PLAIN_ERROR)),
     ],
 )
 def test_client_error_details_reads_every_error_shape(error, expected_status, expected_message):
     assert client_error_details(error) == (expected_status, expected_message)
+
+
+def _sagemaker_http_error(status: int, error_type: str, body: Mapping[str, object]) -> httpx.HTTPStatusError:
+    response: Final = httpx.Response(
+        status,
+        headers={"x-amzn-ErrorType": f"{error_type}:http://internal.amazon.com/coral/com.amazonaws.sagemaker.runtime/"},
+        json=body,
+        request=httpx.Request("POST", "https://runtime.sagemaker.test/x"),
+    )
+    return httpx.HTTPStatusError("boom", request=response.request, response=response)
+
+
+def _masked(error: httpx.HTTPStatusError) -> MaskedHTTPStatusError:
+    return MaskedHTTPStatusError(error, text=error.response.text)
+
+
+def _sagemaker_client_error(code: str, status: int, **modeled_fields: object) -> ClientError:
+    return ClientError(
+        {"Error": {"Code": code, "Message": "sagemaker says no"}, "ResponseMetadata": {"HTTPStatusCode": status}}
+        | modeled_fields,
+        "InvokeEndpoint",
+    )
+
+
+def _model_error_body(original_status: int) -> Mapping[str, object]:
+    return {"Message": f"Received error ({original_status}) from primary", "OriginalStatusCode": original_status}
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status"),
+    [
+        (_masked(_sagemaker_http_error(400, "ThrottlingException", {"message": "Rate exceeded"})), 429),
+        (_sagemaker_http_error(400, "ThrottlingException", {"message": "Rate exceeded"}), 429),
+        (_masked(_sagemaker_http_error(400, "ValidationError", {"Message": "Endpoint x not found."})), 400),
+        (_masked(_sagemaker_http_error(424, "ModelError", _model_error_body(422))), 422),
+        (_masked(_sagemaker_http_error(424, "ModelError", _model_error_body(503))), 503),
+        (_masked(_sagemaker_http_error(424, "ModelError", _model_error_body(0))), 500),
+        (_masked(_sagemaker_http_error(424, "ModelError", {"Message": "Received error from primary"})), 500),
+        (_sagemaker_client_error("ThrottlingException", 400), 429),
+        (_sagemaker_client_error("ModelError", 424, OriginalStatusCode=422), 422),
+        (_sagemaker_client_error("ModelError", 424, OriginalStatusCode=500), 500),
+        (_sagemaker_client_error("ModelError", 424, OriginalStatusCode=0), 500),
+    ],
+)
+def test_throttles_answer_429_and_model_errors_answer_the_containers_status(error, expected_status):
+    assert client_error_details(error)[0] == expected_status

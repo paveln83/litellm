@@ -12,6 +12,7 @@ inflating TTFT and turning a steady provider stream into gap-then-burst delivery
 import binascii
 import json
 import struct
+from collections.abc import Mapping
 from typing import AsyncIterator, Final, Iterator
 from unittest.mock import MagicMock
 
@@ -750,3 +751,47 @@ async def test_completion_sagemaker_inference_component_header(
 
     assert route.calls[0].request.headers.get(_INFERENCE_COMPONENT_HEADER) == expected_header
     assert response.choices[0].message.content == "SageMaker reply"
+
+
+def _sagemaker_error_response(status: int, error_type: str, body: Mapping[str, object]) -> httpx.Response:
+    return httpx.Response(
+        status,
+        headers={"x-amzn-ErrorType": f"{error_type}:http://internal.amazon.com/coral/com.amazonaws.sagemaker.runtime/"},
+        json=body,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("httpx_transport")
+@pytest.mark.usefixtures("fake_provider_credentials")
+@pytest.mark.parametrize("sync_mode", [True, False])
+@pytest.mark.parametrize(
+    ("sagemaker_response", "error_class"),
+    [
+        (_sagemaker_error_response(400, "ThrottlingException", {"message": "Rate exceeded"}), litellm.RateLimitError),
+        (
+            _sagemaker_error_response(
+                424, "ModelError", {"Message": "Received server error (500) from primary", "OriginalStatusCode": 500}
+            ),
+            litellm.ServiceUnavailableError,
+        ),
+        (
+            _sagemaker_error_response(
+                424, "ModelError", {"Message": "Received client error (422) from primary", "OriginalStatusCode": 422}
+            ),
+            litellm.BadRequestError,
+        ),
+    ],
+)
+async def test_completion_sagemaker_throttles_and_container_server_errors_stay_retryable(
+    respx_mock: respx.MockRouter,
+    sync_mode: bool,
+    sagemaker_response: httpx.Response,
+    error_class: type[litellm.APIError],
+) -> None:
+    respx_mock.post(_ENDPOINT_URL).mock(return_value=sagemaker_response)
+
+    with pytest.raises(error_class) as exc_info:
+        await _complete_sagemaker(sync_mode)
+
+    assert exc_info.value.llm_provider == "sagemaker"

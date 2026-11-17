@@ -309,17 +309,19 @@ def test_no_inference_component_header_when_model_id_is_unset(monkeypatch):
     assert not any(name.lower() == _INFERENCE_COMPONENT_HEADER.lower() for name in client.request_headers)
 
 
+@pytest.mark.parametrize("model", ["sagemaker_chat/my-endpoint", "sagemaker_nova/my-endpoint"])
 @pytest.mark.parametrize("model_id", [["component-a", "component-b"], 123])
-def test_non_string_model_id_is_rejected_before_the_call(monkeypatch, model_id):
+def test_non_string_model_id_is_rejected_before_the_call(monkeypatch, model, model_id):
     with pytest.raises(litellm.BadRequestError) as exc_info:
-        _invoke_sagemaker_chat(monkeypatch, model_id=model_id)
+        _invoke_sagemaker_chat(monkeypatch, model=model, model_id=model_id)
 
     assert exc_info.value.status_code == 400
     assert "model_id must be the inference component name as a string" in exc_info.value.message
 
 
-def test_non_string_model_id_is_dropped_under_drop_params(monkeypatch):
-    client = _invoke_sagemaker_chat(monkeypatch, model_id=["component-a"], drop_params=True)
+@pytest.mark.parametrize("model", ["sagemaker_chat/my-endpoint", "sagemaker_nova/my-endpoint"])
+def test_non_string_model_id_is_dropped_under_drop_params(monkeypatch, model):
+    client = _invoke_sagemaker_chat(monkeypatch, model=model, model_id=["component-a"], drop_params=True)
 
     assert client.request_body["messages"] == [{"role": "user", "content": "hi"}]
     assert not any(name.lower() == _INFERENCE_COMPONENT_HEADER.lower() for name in client.request_headers)
