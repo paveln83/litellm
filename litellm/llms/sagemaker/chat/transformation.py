@@ -36,7 +36,10 @@ from ..common_utils import (
     STR_KEYED_MAPPING,
     AWSEventStreamDecoder,
     SagemakerError,
+    client_error,
+    http_error_details,
     inference_component_name,
+    with_inference_component_hint,
 )
 
 if TYPE_CHECKING:
@@ -55,7 +58,13 @@ class SagemakerChatConfig(OpenAIGPTConfig, BaseAWSLLM):
         BaseAWSLLM.__init__(self, **kwargs)
 
     def get_error_class(self, error_message: str, status_code: int, headers: dict | Headers) -> BaseLLMException:
-        return SagemakerError(status_code=status_code, message=error_message, headers=headers)
+        response_headers: Final = Headers(
+            {str(name): str(value) for name, value in OBJECT_KEYED_MAPPING.validate_python(headers).items()}
+        )
+        caller_status, message = http_error_details(status_code, response_headers, error_message)
+        return SagemakerError(
+            status_code=caller_status, message=with_inference_component_hint(message, "completion"), headers=headers
+        )
 
     def validate_environment(
         self,
@@ -189,7 +198,7 @@ class SagemakerChatConfig(OpenAIGPTConfig, BaseAWSLLM):
                 logging_obj=logging_obj,
             )
         except httpx.HTTPStatusError as e:
-            raise SagemakerError(status_code=e.response.status_code, message=e.response.text)
+            raise client_error(e, "completion")
 
         if response.status_code != 200:
             raise SagemakerError(status_code=response.status_code, message=response.text)
@@ -238,7 +247,7 @@ class SagemakerChatConfig(OpenAIGPTConfig, BaseAWSLLM):
                 logging_obj=logging_obj,
             )
         except httpx.HTTPStatusError as e:
-            raise SagemakerError(status_code=e.response.status_code, message=e.response.text)
+            raise client_error(e, "completion")
 
         if response.status_code != 200:
             raise SagemakerError(status_code=response.status_code, message=response.text)

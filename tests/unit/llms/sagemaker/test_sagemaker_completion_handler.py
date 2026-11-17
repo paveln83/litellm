@@ -689,9 +689,11 @@ async def test_completion_sagemaker_non_200_keeps_sagemaker_status_and_message(
 @pytest.mark.usefixtures("httpx_transport")
 @pytest.mark.usefixtures("fake_provider_credentials")
 @pytest.mark.parametrize("sync_mode", [True, False])
+@pytest.mark.parametrize("model", ["sagemaker/my-endpoint", "sagemaker_chat/my-endpoint"])
 async def test_completion_sagemaker_names_model_id_when_the_endpoint_needs_an_inference_component(
     respx_mock: respx.MockRouter,
     sync_mode: bool,
+    model: str,
 ) -> None:
     respx_mock.post(_ENDPOINT_URL).mock(
         return_value=httpx.Response(
@@ -701,7 +703,7 @@ async def test_completion_sagemaker_names_model_id_when_the_endpoint_needs_an_in
     )
 
     with pytest.raises(litellm.BadRequestError) as exc_info:
-        await _complete_sagemaker(sync_mode)
+        await _complete_sagemaker(sync_mode, model=model)
 
     assert "pass in via `litellm.completion(..., model_id={InferenceComponentName})`" in exc_info.value.message
 
@@ -725,6 +727,7 @@ async def test_completion_sagemaker_rejects_a_non_string_model_id(
 
     assert exc_info.value.status_code == 400
     assert "model_id must be the inference component name as a string" in exc_info.value.message
+    assert "drop_params" in exc_info.value.message
     assert not route.called
 
 
@@ -765,20 +768,22 @@ def _sagemaker_error_response(status: int, error_type: str, body: Mapping[str, o
 @pytest.mark.usefixtures("httpx_transport")
 @pytest.mark.usefixtures("fake_provider_credentials")
 @pytest.mark.parametrize("sync_mode", [True, False])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("provider", ["sagemaker", "sagemaker_chat", "sagemaker_nova"])
 @pytest.mark.parametrize(
-    ("sagemaker_response", "error_class"),
+    ("status", "error_type", "body", "error_class"),
     [
-        (_sagemaker_error_response(400, "ThrottlingException", {"message": "Rate exceeded"}), litellm.RateLimitError),
+        (400, "ThrottlingException", {"message": "Rate exceeded"}, litellm.RateLimitError),
         (
-            _sagemaker_error_response(
-                424, "ModelError", {"Message": "Received server error (500) from primary", "OriginalStatusCode": 500}
-            ),
-            litellm.ServiceUnavailableError,
+            424,
+            "ModelError",
+            {"Message": "Received server error (500) from primary", "OriginalStatusCode": 500},
+            (litellm.ServiceUnavailableError, litellm.InternalServerError),
         ),
         (
-            _sagemaker_error_response(
-                424, "ModelError", {"Message": "Received client error (422) from primary", "OriginalStatusCode": 422}
-            ),
+            424,
+            "ModelError",
+            {"Message": "Received client error (422) from primary", "OriginalStatusCode": 422},
             litellm.BadRequestError,
         ),
     ],
@@ -786,12 +791,16 @@ def _sagemaker_error_response(status: int, error_type: str, body: Mapping[str, o
 async def test_completion_sagemaker_throttles_and_container_server_errors_stay_retryable(
     respx_mock: respx.MockRouter,
     sync_mode: bool,
-    sagemaker_response: httpx.Response,
-    error_class: type[litellm.APIError],
+    stream: bool,
+    provider: str,
+    status: int,
+    error_type: str,
+    body: Mapping[str, object],
+    error_class: type[litellm.APIError] | tuple[type[litellm.APIError], ...],
 ) -> None:
-    respx_mock.post(_ENDPOINT_URL).mock(return_value=sagemaker_response)
+    respx_mock.post(url__startswith=_ENDPOINT_URL).mock(return_value=_sagemaker_error_response(status, error_type, body))
 
     with pytest.raises(error_class) as exc_info:
-        await _complete_sagemaker(sync_mode)
+        await _complete_sagemaker(sync_mode, model=f"{provider}/my-endpoint", stream=stream)
 
-    assert exc_info.value.llm_provider == "sagemaker"
+    assert exc_info.value.llm_provider == provider

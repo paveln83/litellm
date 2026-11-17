@@ -710,6 +710,7 @@ HTTPX_STATUS_ERROR = httpx.HTTPStatusError(
 MASKED_STATUS_ERROR = MaskedHTTPStatusError(HTTPX_STATUS_ERROR, message="masked body", text='{"message": "bad input"}')
 EMPTY_MASKED_STATUS_ERROR = MaskedHTTPStatusError(HTTPX_STATUS_ERROR, message="", text="")
 PLAIN_TEXT_MASKED_STATUS_ERROR = MaskedHTTPStatusError(HTTPX_STATUS_ERROR, text="upstream gateway error")
+STREAMED_MASKED_STATUS_ERROR = MaskedHTTPStatusError(HTTPX_STATUS_ERROR, text=b'{"Message": "bad streamed input"}')
 PLAIN_ERROR = RuntimeError("plain failure")
 
 
@@ -732,6 +733,7 @@ PLAIN_ERROR = RuntimeError("plain failure")
         (HTTPX_STATUS_ERROR, 400, str(HTTPX_STATUS_ERROR)),
         (MASKED_STATUS_ERROR, 400, "bad input"),
         (PLAIN_TEXT_MASKED_STATUS_ERROR, 400, "upstream gateway error"),
+        (STREAMED_MASKED_STATUS_ERROR, 400, "bad streamed input"),
         (EMPTY_MASKED_STATUS_ERROR, 400, str(EMPTY_MASKED_STATUS_ERROR)),
         (PLAIN_ERROR, 500, str(PLAIN_ERROR)),
     ],

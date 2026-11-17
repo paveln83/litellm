@@ -34,9 +34,8 @@ from ..common_utils import (
     STR_KEYED_MAPPING,
     AWSEventStreamDecoder,
     SagemakerError,
-    client_error_details,
+    client_error,
     inference_component_name,
-    with_inference_component_hint,
 )
 from ..embedding.transformation import SagemakerEmbeddingConfig
 from .transformation import SagemakerConfig
@@ -317,10 +316,7 @@ class SagemakerLLM(BaseAWSLLM):
                 raise e
         except Exception as e:
             verbose_logger.error("Sagemaker error %s", str(e))
-            status_code, error_message = client_error_details(e)
-            raise SagemakerError(
-                status_code=status_code, message=with_inference_component_hint(error_message, "completion")
-            )
+            raise client_error(e, "completion")
 
         return sagemaker_config.transform_response(
             model=model,
@@ -344,12 +340,15 @@ class SagemakerLLM(BaseAWSLLM):
     ):
         if client is None:
             client = get_httpx_client()
-        sync_response: Final = client.post(
-            api_base,
-            headers=headers,
-            data=data,
-            stream=True,
-        )
+        try:
+            sync_response: Final = client.post(
+                api_base,
+                headers=headers,
+                data=data,
+                stream=True,
+            )
+        except httpx.HTTPStatusError as e:
+            raise client_error(e, "completion")
 
         if sync_response.status_code != 200:
             raise SagemakerError(status_code=sync_response.status_code, message=str(sync_response.read()))
@@ -394,8 +393,7 @@ class SagemakerLLM(BaseAWSLLM):
             )
 
         except httpx.HTTPStatusError as err:
-            error_code: Final = err.response.status_code
-            raise SagemakerError(status_code=error_code, message=err.response.text)
+            raise client_error(err, "completion")
         except httpx.TimeoutException:
             raise SagemakerError(status_code=408, message="Timeout error occurred.")
         except Exception as e:
@@ -540,10 +538,7 @@ class SagemakerLLM(BaseAWSLLM):
                 )
                 raise e
         except Exception as e:
-            status_code, error_message = client_error_details(e)
-            raise SagemakerError(
-                status_code=status_code, message=with_inference_component_hint(error_message, "completion")
-            )
+            raise client_error(e, "completion")
         return sagemaker_config.transform_response(
             model=model,
             raw_response=response,
@@ -643,10 +638,7 @@ class SagemakerLLM(BaseAWSLLM):
                 else client.invoke_endpoint(**invoke_args)
             )
         except Exception as e:
-            status_code, error_message = client_error_details(e)
-            raise SagemakerError(
-                status_code=status_code, message=with_inference_component_hint(error_message, "embedding")
-            )
+            raise client_error(e, "embedding")
 
         response = _DECODED_JSON.validate_python(json.loads(response["Body"].read().decode("utf8")))
         ## LOGGING

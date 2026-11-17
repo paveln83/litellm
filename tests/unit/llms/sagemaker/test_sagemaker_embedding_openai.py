@@ -311,7 +311,9 @@ class TestSagemakerEmbeddingInferenceComponents:
             self.embed_with(session, "openai/my-embed-endpoint", {"model_id": ["my-component"]})
 
         assert raised.value.status_code == 400
-        assert raised.value.message == "model_id must be the inference component name as a string"
+        assert raised.value.message == (
+            "model_id must be the inference component name as a string, or set drop_params to drop it"
+        )
         client.invoke_endpoint.assert_not_called()
 
 

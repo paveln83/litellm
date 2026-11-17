@@ -251,19 +251,26 @@ def _http_error_body(body: str) -> _HttpErrorBody:
         return _HttpErrorBody()
 
 
-def _http_error_status(response: httpx.Response, original_status_code: int | None) -> int:
-    error_types: Final = response.headers.get_list(AWS_ERROR_TYPE_HEADER)
-    error_type: Final = error_types[0].partition(":")[0] if error_types else None
-    return _caller_status(response.status_code, error_type, original_status_code)
+def _error_type(headers: httpx.Headers) -> str | None:
+    error_types: Final = headers.get_list(AWS_ERROR_TYPE_HEADER)
+    return error_types[0].partition(":")[0] if error_types else None
+
+
+def http_error_details(status_code: int, headers: httpx.Headers, body: str) -> tuple[int, str]:
+    parsed: Final = _http_error_body(body)
+    return _caller_status(status_code, _error_type(headers), parsed.original_status_code), parsed.message or body
 
 
 def client_error_details(error: Exception) -> tuple[int, str]:
     match error:
         case MaskedHTTPStatusError(text=str() as masked_body) if masked_body:
-            body: Final = _http_error_body(masked_body)
-            return _http_error_status(error.response, body.original_status_code), body.message or masked_body
+            return http_error_details(error.response.status_code, error.response.headers, masked_body)
+        case MaskedHTTPStatusError(text=bytes() as streamed_body) if streamed_body:
+            return http_error_details(
+                error.response.status_code, error.response.headers, streamed_body.decode(errors="replace")
+            )
         case httpx.HTTPStatusError():
-            return _http_error_status(error.response, None), str(error)
+            return _caller_status(error.response.status_code, _error_type(error.response.headers), None), str(error)
         case _:
             return _boto_client_error_details(error)
 
@@ -293,13 +300,21 @@ class SagemakerError(BaseLLMException):
         super().__init__(status_code=status_code, message=message, headers=headers)
 
 
+def client_error(error: Exception, call: Literal["completion", "embedding"]) -> SagemakerError:
+    status_code, message = client_error_details(error)
+    return SagemakerError(status_code=status_code, message=with_inference_component_hint(message, call))
+
+
 def inference_component_name(params: Mapping[str, object], drop_params: bool) -> str | None | SagemakerError:
     model_id: Final = params.get("model_id")
     if model_id is None or isinstance(model_id, str):
         return model_id
     if drop_params:
         return None
-    return SagemakerError(status_code=400, message="model_id must be the inference component name as a string")
+    return SagemakerError(
+        status_code=400,
+        message="model_id must be the inference component name as a string, or set drop_params to drop it",
+    )
 
 
 class _StreamExceptionBody(BaseModel):
