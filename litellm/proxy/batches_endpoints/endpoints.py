@@ -86,7 +86,6 @@ if TYPE_CHECKING:
 
 router: Final = APIRouter()
 _REQUEST_BODY_ADAPTER: Final = TypeAdapter(Mapping[str, object])
-_REQUESTED_PROVIDER: Final[TypeAdapter[str | None]] = TypeAdapter(str | None)
 
 
 class _UserBatchLister(Protocol):
@@ -187,6 +186,12 @@ def _litellm_metadata_of(data: MutableMapping[str, object]) -> MutableMapping[st
     created: Final[dict[str, object]] = {}  # mutable-ok: the logging layer copies and extends this mapping
     data["litellm_metadata"] = created  # rebind-ok: the success handler reads the request's own mapping
     return created
+
+
+def _requested_provider(value: object) -> str | None:
+    if value is None or isinstance(value, str):
+        return value
+    raise batch_error(400, f"custom_llm_provider must be a string, got {type(value).__name__}")
 
 
 def _raise_not_found_when_openai_fallback_unservable(
@@ -337,12 +342,11 @@ async def create_batch(
             router_model = data.get("model", None)
             is_router_model = is_known_model(model=router_model, llm_router=llm_router)
 
-        requested_provider: Final = _REQUESTED_PROVIDER.validate_python(
+        requested_provider_value: Final[object] = (
             provider
             or data.pop("custom_llm_provider", None)
             or get_custom_llm_provider_from_request_headers(request=request)
         )
-        custom_llm_provider: Final = requested_provider or "openai"
         _create_batch_data: Final = LiteLLMBatchCreateRequest(**data)
 
         # Apply team-level batch output expiry enforcement
@@ -519,6 +523,8 @@ async def create_batch(
                 verbose_proxy_logger.debug("Created batch using model: %s", model_param)
             else:
                 # SCENARIO 3: Fallback to custom_llm_provider (uses env variables)
+                requested_provider: Final = _requested_provider(requested_provider_value)
+                custom_llm_provider: Final = requested_provider or "openai"
                 apply_team_provider_credentials(
                     data=cast(dict, _create_batch_data),  # cast-ok: TypedDict is a dict at runtime
                     llm_router=llm_router,

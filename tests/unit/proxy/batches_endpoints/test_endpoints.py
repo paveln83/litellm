@@ -706,6 +706,45 @@ async def test_create__fallback_body_custom_llm_provider(harness):
     assert payload["custom_llm_provider"] == "bedrock"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("custom_llm_provider", [123, ["openai"]])
+async def test_create__fallback_non_string_custom_llm_provider_400(harness, custom_llm_provider):
+    set_body(
+        harness,
+        {
+            "input_file_id": "file-plain",
+            "endpoint": "/v1/chat/completions",
+            "completion_window": "24h",
+            "custom_llm_provider": custom_llm_provider,
+        },
+    )
+
+    with pytest.raises(ProxyException) as exc:
+        await call_create(harness)
+
+    assert exc.value.code == "400"
+    harness.litellm_acreate.assert_not_called()
+    harness.router_acreate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create__model_route_ignores_a_non_string_custom_llm_provider(harness):
+    set_body(
+        harness,
+        {
+            "input_file_id": "file-plain",
+            "endpoint": "/v1/chat/completions",
+            "completion_window": "24h",
+            "custom_llm_provider": 123,
+        },
+    )
+
+    await call_create(harness, headers={"x-litellm-model": "vertex-model"})
+
+    harness.creds_resolver.assert_called_once_with("vertex-model", form="with_provider")
+    assert harness.acreate_kwargs()["custom_llm_provider"] == "vertex_ai"
+
+
 # =========================================================================== #
 # Unified file id routing (-> llm_router). Helpers mocked only here because a
 # real unified id is opaque base64; the routing contract is what we lock.
