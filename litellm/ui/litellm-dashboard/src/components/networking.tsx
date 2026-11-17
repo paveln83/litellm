@@ -1079,14 +1079,24 @@ export const userCreateCall = async (
   }
 };
 
-export const keyDeleteCall = async (accessToken: string, user_key: string) => {
+export const keyDeleteCall = async (accessToken: string, user_key: string | string[]) => {
   try {
-    return await apiClient.post(`/key/delete`, { accessToken, body: { keys: [user_key] } });
+    return await apiClient.post(`/key/delete`, {
+      accessToken,
+      body: { keys: typeof user_key === "string" ? [user_key] : user_key },
+    });
   } catch (error) {
-    console.error("Failed to create key:", error);
+    console.error("Failed to delete key:", error);
     throw error;
   }
 };
+
+export type BulkKeyUpdateResponse = components["schemas"]["BulkUpdateKeyResponse"];
+
+export const keyBulkUpdateCall = (
+  accessToken: string,
+  keys: components["schemas"]["BulkUpdateKeyRequestItem"][],
+): Promise<BulkKeyUpdateResponse> => apiClient.post("/key/bulk_update", { accessToken, body: { keys } });
 
 export const userDeleteCall = async (accessToken: string, userIds: string[]) => {
   try {
@@ -4456,6 +4466,8 @@ export interface ConnectFlowStatus {
   connected: boolean | null;
   requested_scopes?: string[];
   servers: { server_id: string; server_name: string; connected: boolean }[] | null;
+  selectable?: false;
+  required_server_ids?: string[];
 }
 
 /**
@@ -6802,8 +6814,7 @@ export const exchangeLoginCode = async (code: string, workerBaseUrl?: string | n
   return data.token;
 };
 
-export const getUiSettings = async () => {
-  const proxyBaseUrl = getProxyBaseUrl();
+export const getUiSettings = async (proxyBaseUrl = getProxyBaseUrl()) => {
   const url = proxyBaseUrl ? `${proxyBaseUrl}/get/ui_settings` : `/get/ui_settings`;
   const response = await fetch(url, {
     method: "GET",
@@ -6952,6 +6963,38 @@ export const reviewSkillSubmission = (
   body?: components["schemas"]["SkillHubRejection"],
 ): Promise<components["schemas"]["SkillHubReviewResponse"]> =>
   apiClient.put(`/skill-hub/submissions/${encodeURIComponent(id)}/${action}`, { accessToken, body });
+
+export const editSkillSubmission = (
+  accessToken: string,
+  id: string,
+  body: components["schemas"]["SkillHubSubmissionEdit"],
+): Promise<components["schemas"]["SkillHubSubmission"]> =>
+  apiClient.put(`/skill-hub/submissions/${encodeURIComponent(id)}`, { accessToken, body });
+
+export const uploadSkillSubmission = (
+  accessToken: string,
+  submission: components["schemas"]["SkillHubSubmission"],
+  file: File,
+  version: string,
+): Promise<components["schemas"]["SkillHubSubmission"]> => {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("expected_revision", String(submission.revision ?? 0));
+  if (version.trim()) body.append("version", version.trim());
+  return apiClient.put(`/skill-hub/submissions/${encodeURIComponent(submission.id)}/upload`, {
+    accessToken,
+    rawBody: body,
+  });
+};
+
+export const withdrawSkillSubmission = (
+  accessToken: string,
+  submission: components["schemas"]["SkillHubSubmission"],
+): Promise<components["schemas"]["SkillHubSubmission"]> =>
+  apiClient.put(`/skill-hub/submissions/${encodeURIComponent(submission.id)}/withdraw`, {
+    accessToken,
+    body: { expected_revision: submission.revision ?? 0 },
+  });
 
 export const getSkillScan = (accessToken: string, id: string): Promise<components["schemas"]["SkillScanResponse"]> =>
   apiClient.get(`/skill-hub/submissions/${encodeURIComponent(id)}/scan`, { accessToken });
