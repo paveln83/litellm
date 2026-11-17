@@ -1932,7 +1932,7 @@ async def _create_project_that_limits_clip_studio(monkeypatch: pytest.MonkeyPatc
     return exc_info.value.message
 
 
-async def _block_project_that_limits_clip_studio(monkeypatch: pytest.MonkeyPatch) -> str:
+async def _update_project_that_limits_clip_studio(monkeypatch: pytest.MonkeyPatch, **fields: object) -> str:
     prisma: Final = _project_update_mocks(
         monkeypatch, {"model_rpm_limit": {"clip-studio": 5}, "model_tpm_limit": {"clip-studio": 100}}
     )
@@ -1943,8 +1943,16 @@ async def _block_project_that_limits_clip_studio(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(
         litellm.proxy.proxy_server, "general_settings", {"enforce_project_model_quota": _CUSTOMER_QUOTA_POLICY}
     )
-    await _run_project_update(f"project-{uuid.uuid4()}", blocked=True)
+    await _run_project_update(f"project-{uuid.uuid4()}", **fields)
     return "saved" if prisma.db.litellm_projecttable.update.await_count == 1 else "not saved"
+
+
+async def _block_project_that_limits_clip_studio(monkeypatch: pytest.MonkeyPatch) -> str:
+    return await _update_project_that_limits_clip_studio(monkeypatch, blocked=True)
+
+
+async def _raise_one_limit_of_a_project_that_limits_clip_studio(monkeypatch: pytest.MonkeyPatch) -> str:
+    return await _update_project_that_limits_clip_studio(monkeypatch, model_rpm_limit={"clip-studio": 10})
 
 
 @pytest.mark.asyncio
@@ -1955,12 +1963,14 @@ async def _block_project_that_limits_clip_studio(monkeypatch: pytest.MonkeyPatch
         (_create_project_under_a_policy_that_exempts_nothing, "clip-studio (model_rpm_limit and model_tpm_limit)"),
         (_create_project_that_limits_clip_studio, "already exists"),
         (_block_project_that_limits_clip_studio, "saved"),
+        (_raise_one_limit_of_a_project_that_limits_clip_studio, "saved"),
     ],
     ids=[
         "create-without-models",
         "policy-exempts-nothing",
         "create-setting-both-limits",
         "block-a-project-setting-both-limits",
+        "raise-one-limit-of-a-project-setting-both-limits",
     ],
 )
 async def test_project_write_with_no_route_to_judge_succeeds_while_the_model_reload_fails(

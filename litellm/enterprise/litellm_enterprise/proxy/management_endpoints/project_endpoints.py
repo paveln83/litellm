@@ -927,8 +927,8 @@ async def update_project(
             quota_router: Final = await _router_for_quota_check(
                 quota_policy,
                 llm_router,
-                _models_after_update(data, existing_project),
-                _metadata_after_update(data, existing_project),
+                _models_after_update(merged_request, existing_project),
+                _metadata_after_update(merged_request, existing_project),
                 target_team_id,
             )
             _raise_on_missing_project_model_quota_on_update(
