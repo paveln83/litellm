@@ -226,7 +226,7 @@ pub struct AwsAuthConfig {
 fn env_session_token_for_key_pair(
     access_key_id: Option<&SecretValue>,
     secret_access_key: Option<&SecretValue>,
-    env_lookup: &(dyn Fn(&str) -> Option<String> + Sync),
+    env_lookup: &dyn Fn(&str) -> Option<String>,
 ) -> Option<SecretValue> {
     let signs_with_env_pair = env_lookup(AWS_ACCESS_KEY_ID)
         .filter(|env_access_key_id| !env_access_key_id.is_empty())
@@ -1138,10 +1138,21 @@ pub fn aws_auth_config(
 ) -> AwsAuthConfig {
     let secret = |spec: &ParamSpec| configured(params, spec, env_lookup).map(SecretValue::new);
     let setting = |spec: &ParamSpec| configured(params, spec, env_lookup);
+    let access_key_id = secret(&AwsParams::ACCESS_KEY_ID);
+    let secret_access_key = secret(&AwsParams::SECRET_ACCESS_KEY);
+    let session_token = configured(params, &AwsParams::SESSION_TOKEN, &|_| None)
+        .map(SecretValue::new)
+        .or_else(|| {
+            env_session_token_for_key_pair(
+                access_key_id.as_ref(),
+                secret_access_key.as_ref(),
+                env_lookup,
+            )
+        });
     AwsAuthConfig {
-        access_key_id: secret(&AwsParams::ACCESS_KEY_ID),
-        secret_access_key: secret(&AwsParams::SECRET_ACCESS_KEY),
-        session_token: secret(&AwsParams::SESSION_TOKEN),
+        access_key_id,
+        secret_access_key,
+        session_token,
         region_name: setting(&AwsParams::REGION),
         session_name: setting(&AwsParams::SESSION_NAME),
         profile_name: setting(&AwsParams::PROFILE_NAME),
@@ -1447,6 +1458,38 @@ mod tests {
             .region_name
             .as_deref(),
             Some("sa-east-1")
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::explicit_pair_ignores_the_env_token(Some(("ak", "sk")), None, ENV_PAIR_AND_TOKEN, None)]
+    #[case::explicit_pair_keeps_its_own_token(Some(("ak", "sk")), Some("own-token"), ENV_PAIR_AND_TOKEN, Some("own-token"))]
+    #[case::env_pair_uses_the_env_token(None, None, ENV_PAIR_AND_TOKEN, Some("env-token"))]
+    #[case::env_with_only_a_token_lends_it(Some(("ak", "sk")), None, &[(AWS_SESSION_TOKEN, "env-token")], Some("env-token"))]
+    fn keys_beside_a_role_take_the_env_session_token_only_with_the_env_key_pair(
+        #[case] explicit_pair: Option<(&str, &str)>,
+        #[case] explicit_token: Option<&str>,
+        #[case] environment: &'static [(&'static str, &'static str)],
+        #[case] expected: Option<&str>,
+    ) {
+        let params = AwsParams {
+            aws_access_key_id: explicit_pair.map(|(access_key_id, _)| access_key_id.to_string()),
+            aws_secret_access_key: explicit_pair
+                .map(|(_, secret_access_key)| secret_access_key.to_string()),
+            aws_session_token: explicit_token.map(str::to_string),
+            aws_role_name: Some("arn:aws:iam::123456789012:role/source".to_string()),
+            ..AwsParams::default()
+        };
+
+        let AwsCredentialSource::Chain(config) =
+            AwsCredentialSource::from_params(&params, &lookup(environment))
+        else {
+            panic!("keys beside a role resolve through the chain");
+        };
+
+        assert_eq!(
+            config.session_token.as_ref().map(SecretValue::expose),
+            expected
         );
     }
 
