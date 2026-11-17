@@ -223,18 +223,43 @@ pub struct AwsAuthConfig {
     pub session_policy: Option<&'static str>,
 }
 
+fn env_session_token_for_key_pair(
+    access_key_id: Option<&SecretValue>,
+    secret_access_key: Option<&SecretValue>,
+    env_lookup: &(dyn Fn(&str) -> Option<String> + Sync),
+) -> Option<SecretValue> {
+    let signs_with_env_pair = env_lookup(AWS_ACCESS_KEY_ID)
+        .filter(|env_access_key_id| !env_access_key_id.is_empty())
+        .is_none_or(|env_access_key_id| {
+            access_key_id.map(SecretValue::expose) == Some(env_access_key_id.as_str())
+                && secret_access_key.map(SecretValue::expose)
+                    == env_lookup(AWS_SECRET_ACCESS_KEY).as_deref()
+        });
+    signs_with_env_pair
+        .then(|| env_lookup(AWS_SESSION_TOKEN))
+        .flatten()
+        .map(SecretValue::new)
+}
+
 impl AwsAuthConfig {
     fn with_environment(self, env_lookup: &(dyn Fn(&str) -> Option<String> + Sync)) -> Self {
+        let access_key_id = self
+            .access_key_id
+            .or_else(|| env_lookup(AWS_ACCESS_KEY_ID).map(SecretValue::new));
+        let secret_access_key = self
+            .secret_access_key
+            .or_else(|| env_lookup(AWS_SECRET_ACCESS_KEY).map(SecretValue::new));
+        let session_token = self.session_token.or_else(|| {
+            env_session_token_for_key_pair(
+                access_key_id.as_ref(),
+                secret_access_key.as_ref(),
+                env_lookup,
+            )
+        });
         Self {
-            access_key_id: self
-                .access_key_id
-                .or_else(|| env_lookup(AWS_ACCESS_KEY_ID).map(SecretValue::new)),
-            secret_access_key: self
-                .secret_access_key
-                .or_else(|| env_lookup(AWS_SECRET_ACCESS_KEY).map(SecretValue::new)),
-            session_token: self
-                .session_token
-                .or_else(|| env_lookup(AWS_SESSION_TOKEN).map(SecretValue::new)),
+            access_key_id,
+            secret_access_key,
+            session_token,
             region_name: self.region_name.or_else(|| env_lookup(AWS_REGION_NAME)),
             session_name: self.session_name.or_else(|| env_lookup(AWS_SESSION_NAME)),
             profile_name: self.profile_name.or_else(|| env_lookup(AWS_PROFILE_NAME)),
@@ -1622,6 +1647,46 @@ mod tests {
             .expect("static credentials");
         assert_eq!(credentials.access_key_id(), "ak");
         assert_eq!(credentials.session_token(), None);
+    }
+
+    const ENV_PAIR_AND_TOKEN: &[(&str, &str)] = &[
+        (AWS_ACCESS_KEY_ID, "env-access"),
+        (AWS_SECRET_ACCESS_KEY, "env-secret"),
+        (AWS_SESSION_TOKEN, "env-token"),
+    ];
+
+    #[rstest::rstest]
+    #[case::explicit_pair_ignores_the_env_token(Some(("ak", "sk")), None, ENV_PAIR_AND_TOKEN, ("ak", None))]
+    #[case::blank_explicit_pair_ignores_the_env_token(Some(("", "")), None, ENV_PAIR_AND_TOKEN, ("", None))]
+    #[case::explicit_pair_keeps_its_own_token(Some(("ak", "sk")), Some("own-token"), ENV_PAIR_AND_TOKEN, ("ak", Some("own-token")))]
+    #[case::explicit_pair_equal_to_the_env_pair_uses_the_env_token(Some(("env-access", "env-secret")), None, ENV_PAIR_AND_TOKEN, ("env-access", Some("env-token")))]
+    #[case::env_pair_uses_the_env_token(None, None, ENV_PAIR_AND_TOKEN, ("env-access", Some("env-token")))]
+    #[case::env_with_only_a_token_lends_it(Some(("ak", "sk")), None, &[(AWS_SESSION_TOKEN, "env-token")], ("ak", Some("env-token")))]
+    #[case::blank_env_key_id_lends_the_token(Some(("ak", "sk")), None, &[(AWS_ACCESS_KEY_ID, ""), (AWS_SECRET_ACCESS_KEY, ""), (AWS_SESSION_TOKEN, "env-token")], ("ak", Some("env-token")))]
+    #[tokio::test]
+    async fn the_env_session_token_signs_only_beside_the_env_key_pair(
+        #[case] explicit_pair: Option<(&str, &str)>,
+        #[case] explicit_token: Option<&str>,
+        #[case] environment: &'static [(&'static str, &'static str)],
+        #[case] expected: (&str, Option<&str>),
+    ) {
+        let credentials = AwsAuthService::default()
+            .resolve_credentials(
+                AwsAuthConfig {
+                    access_key_id: explicit_pair.map(|(key, _)| SecretValue::new(key)),
+                    secret_access_key: explicit_pair.map(|(_, secret)| SecretValue::new(secret)),
+                    session_token: explicit_token.map(SecretValue::new),
+                    region_name: Some("us-east-1".into()),
+                    ..Default::default()
+                },
+                &lookup(environment),
+            )
+            .await
+            .expect("static credentials");
+        assert_eq!(
+            (credentials.access_key_id(), credentials.session_token()),
+            expected
+        );
     }
 
     struct CountingLoader {
