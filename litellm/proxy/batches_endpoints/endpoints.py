@@ -86,6 +86,7 @@ if TYPE_CHECKING:
 
 router: Final = APIRouter()
 _REQUEST_BODY_ADAPTER: Final = TypeAdapter(Mapping[str, object])
+_REQUESTED_PROVIDER: Final[TypeAdapter[str | None]] = TypeAdapter(str | None)
 
 
 class _UserBatchLister(Protocol):
@@ -336,7 +337,7 @@ async def create_batch(
             router_model = data.get("model", None)
             is_router_model = is_known_model(model=router_model, llm_router=llm_router)
 
-        requested_provider: Final = (
+        requested_provider: Final = _REQUESTED_PROVIDER.validate_python(
             provider
             or data.pop("custom_llm_provider", None)
             or get_custom_llm_provider_from_request_headers(request=request)
