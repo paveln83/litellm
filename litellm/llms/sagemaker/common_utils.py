@@ -224,24 +224,37 @@ class _ClientErrorResponse(BaseModel):
     error: _ClientErrorBody = Field(default_factory=_ClientErrorBody, alias="Error")
     response_metadata: _ClientErrorMetadata = Field(default_factory=_ClientErrorMetadata, alias="ResponseMetadata")
     original_status_code: int | None = Field(default=None, alias="OriginalStatusCode")
+    original_message: str | None = Field(default=None, alias="OriginalMessage")
 
 
 class _HttpErrorBody(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True, hide_input_in_errors=True)
     message: str | None = Field(default=None, validation_alias=AliasChoices("Message", "message"))
+    error_code: str | None = Field(default=None, validation_alias="ErrorCode")
     original_status_code: int | None = Field(default=None, validation_alias="OriginalStatusCode")
+    original_message: str | None = Field(default=None, validation_alias="OriginalMessage")
 
 
-def _caller_status(status_code: int, error_type: str | None, original_status_code: int | None) -> int:
-    match error_type:
-        case "ThrottlingException":
+def _is_http_error(status_code: int) -> bool:
+    return httpx.codes.is_error(status_code) and bool(httpx.codes.get_reason_phrase(status_code))
+
+
+def _caller_status(
+    status_code: int, error_type: str | None, error_code: str | None, original_status_code: int | None
+) -> int:
+    match error_type, error_code:
+        case "ThrottlingException", _:
             return 429
-        case "ModelError" if original_status_code is not None and httpx.codes.is_error(original_status_code):
+        case _, "NO_SUCH_ENDPOINT":
+            return 404
+        case "ModelError", _ if original_status_code is not None and _is_http_error(original_status_code):
             return original_status_code
-        case "ModelError":
+        case "ModelError", _:
             return 500
-        case _:
+        case _ if _is_http_error(status_code):
             return status_code
+        case _:
+            return 500
 
 
 def _http_error_body(body: str) -> _HttpErrorBody:
@@ -258,7 +271,10 @@ def _error_type(headers: httpx.Headers) -> str | None:
 
 def http_error_details(status_code: int, headers: httpx.Headers, body: str) -> tuple[int, str]:
     parsed: Final = _http_error_body(body)
-    return _caller_status(status_code, _error_type(headers), parsed.original_status_code), parsed.message or body
+    caller_status: Final = _caller_status(
+        status_code, _error_type(headers), parsed.error_code, parsed.original_status_code
+    )
+    return caller_status, parsed.original_message or parsed.message or body
 
 
 def client_error_details(error: Exception) -> tuple[int, str]:
@@ -270,7 +286,9 @@ def client_error_details(error: Exception) -> tuple[int, str]:
                 error.response.status_code, error.response.headers, streamed_body.decode(errors="replace")
             )
         case httpx.HTTPStatusError():
-            return _caller_status(error.response.status_code, _error_type(error.response.headers), None), str(error)
+            return _caller_status(error.response.status_code, _error_type(error.response.headers), None, None), str(
+                error
+            )
         case _:
             return _boto_client_error_details(error)
 
@@ -281,9 +299,9 @@ def _boto_client_error_details(error: Exception) -> tuple[int, str]:
     except ValidationError:
         return 500, str(error)
     status_code: Final = _caller_status(
-        response.response_metadata.http_status_code, response.error.code, response.original_status_code
+        response.response_metadata.http_status_code, response.error.code, None, response.original_status_code
     )
-    return status_code, response.error.message or str(error)
+    return status_code, response.original_message or response.error.message or str(error)
 
 
 class _EventStreamMessage(Protocol):

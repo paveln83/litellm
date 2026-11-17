@@ -166,6 +166,6 @@ def test_embedding_rejects_a_non_string_model_id_before_calling_aws(wire: Wire) 
 def test_embedding_surfaces_the_container_model_error_with_its_status(wire: Wire) -> None:
     with pytest.raises(litellm.BadRequestError) as caught:
         litellm.embedding(model=openai_route("err424"), input=[_text()], model_id=COMPONENT, **_AWS)
-    assert caught.value.status_code == 424, caught.value
+    assert caught.value.status_code == 400, caught.value
     assert "unexpected field inputs" in str(caught.value), caught.value
     assert _only_request(wire).headers[COMPONENT_HEADER] == COMPONENT

@@ -498,7 +498,7 @@ def test_container_validation_error_reaches_the_caller_as_400(proxy: Gateway, wi
 
 def test_container_model_error_reaches_the_caller_with_the_original_message(proxy: Gateway, wire: Wire) -> None:
     response: Final = _embed(proxy, "sm-openai-err424", [_text()])
-    assert response.status_code == 424, response.text
+    assert response.status_code == 400, response.text
     assert "unexpected field inputs" in response.text, response.text
     assert _only_request(wire).headers[COMPONENT_HEADER] == COMPONENT
     assert _spend_row(response)["status"] == "failure"
@@ -507,7 +507,7 @@ def test_container_model_error_reaches_the_caller_with_the_original_message(prox
 def test_plain_route_body_rejected_by_an_openai_container_reaches_the_caller(proxy: Gateway, wire: Wire) -> None:
     text: Final = _text()
     response: Final = _embed(proxy, "sm-plain-err424", [text])
-    assert response.status_code == 424, response.text
+    assert response.status_code == 400, response.text
     assert "unexpected field inputs" in response.text, response.text
     request: Final = _only_request(wire)
     assert request.headers[COMPONENT_HEADER] == COMPONENT, dict(request.headers)

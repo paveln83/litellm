@@ -786,9 +786,21 @@ def _sagemaker_error_response(status: int, error_type: str, body: Mapping[str, o
             {"Message": "Received client error (422) from primary", "OriginalStatusCode": 422},
             litellm.BadRequestError,
         ),
+        (
+            400,
+            "ValidationError",
+            {"ErrorCode": "NO_SUCH_ENDPOINT", "Message": "Endpoint my-endpoint of account 000000000000 not found."},
+            litellm.NotFoundError,
+        ),
+        (
+            530,
+            "InternalDependencyException",
+            {"Message": "Your request caused an exception with an internal dependency."},
+            (litellm.ServiceUnavailableError, litellm.InternalServerError),
+        ),
     ],
 )
-async def test_completion_sagemaker_throttles_and_container_server_errors_stay_retryable(
+async def test_completion_sagemaker_error_statuses_keep_their_retry_and_failover_signals(
     respx_mock: respx.MockRouter,
     sync_mode: bool,
     stream: bool,

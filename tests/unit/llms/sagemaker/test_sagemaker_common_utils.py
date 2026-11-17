@@ -736,6 +736,19 @@ PLAIN_ERROR = RuntimeError("plain failure")
         (STREAMED_MASKED_STATUS_ERROR, 400, "bad streamed input"),
         (EMPTY_MASKED_STATUS_ERROR, 400, str(EMPTY_MASKED_STATUS_ERROR)),
         (PLAIN_ERROR, 500, str(PLAIN_ERROR)),
+        (
+            ClientError(
+                {
+                    "Error": {"Code": "ModelError", "Message": "Received client error (422) in account 000000000000"},
+                    "ResponseMetadata": {"HTTPStatusCode": 424},
+                    "OriginalStatusCode": 422,
+                    "OriginalMessage": "top_p must be < 1",
+                },
+                "InvokeEndpoint",
+            ),
+            422,
+            "top_p must be < 1",
+        ),
     ],
 )
 def test_client_error_details_reads_every_error_shape(error, expected_status, expected_message):
@@ -773,7 +786,18 @@ def _model_error_body(original_status: int) -> Mapping[str, object]:
     [
         (_masked(_sagemaker_http_error(400, "ThrottlingException", {"message": "Rate exceeded"})), 429),
         (_sagemaker_http_error(400, "ThrottlingException", {"message": "Rate exceeded"}), 429),
-        (_masked(_sagemaker_http_error(400, "ValidationError", {"Message": "Endpoint x not found."})), 400),
+        (_masked(_sagemaker_http_error(400, "ValidationError", {"Message": "1 validation error detected"})), 400),
+        (
+            _masked(
+                _sagemaker_http_error(
+                    400, "ValidationError", {"ErrorCode": "NO_SUCH_ENDPOINT", "Message": "Endpoint x not found."}
+                )
+            ),
+            404,
+        ),
+        (_masked(_sagemaker_http_error(530, "InternalDependencyException", {"Message": "dependency failed"})), 500),
+        (_masked(_sagemaker_http_error(424, "ModelError", _model_error_body(530))), 500),
+        (_sagemaker_client_error("InternalDependencyException", 530), 500),
         (_masked(_sagemaker_http_error(424, "ModelError", _model_error_body(422))), 422),
         (_masked(_sagemaker_http_error(424, "ModelError", _model_error_body(503))), 503),
         (_masked(_sagemaker_http_error(424, "ModelError", _model_error_body(0))), 500),
@@ -786,3 +810,17 @@ def _model_error_body(original_status: int) -> Mapping[str, object]:
 )
 def test_throttles_answer_429_and_model_errors_answer_the_containers_status(error, expected_status):
     assert client_error_details(error)[0] == expected_status
+
+
+@pytest.mark.parametrize("wrap", [_masked, lambda error: MaskedHTTPStatusError(error, text=error.response.content)])
+def test_model_error_message_is_the_containers_own_without_the_aws_wrapper(wrap):
+    error: Final = _sagemaker_http_error(
+        424,
+        "ModelError",
+        {
+            "Message": "Received client error (422) from primary. See the log group in account 000000000000",
+            "OriginalStatusCode": 422,
+            "OriginalMessage": '{"error":"top_p must be < 1"}',
+        },
+    )
+    assert client_error_details(wrap(error)) == (422, '{"error":"top_p must be < 1"}')
