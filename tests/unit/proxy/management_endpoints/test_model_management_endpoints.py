@@ -8682,6 +8682,33 @@ async def test_team_model_patch_judges_its_stored_route_when_this_worker_holds_a
 
 
 @pytest.mark.asyncio
+async def test_team_model_patch_judges_its_stored_route_by_the_provider_its_env_reference_resolves_to(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLIP_PROVIDER", "runwayml")
+    stored: Final = {"model": "gen4_turbo", "custom_llm_provider": "os.environ/CLIP_PROVIDER"}
+    prisma: Final = _media_team_db("jev-latest", {})
+    prisma.db.litellm_proxymodeltable.find_unique = AsyncMock(return_value=_team_model_row("jev-latest", stored))
+    _use_db_backed_quota_proxy(
+        monkeypatch, prisma, _quota_router("jev-latest", {"model": "openai/jev-latest"}, _TEAM_RUNWAY)
+    )
+    moved_to_vertex: Final = updateLiteLLMParams(
+        model="gemini-3.8-flash", custom_llm_provider="vertex_ai", vertex_project="qa-project"
+    )
+
+    with pytest.raises(ProxyException) as error:
+        await patch_model(
+            model_id="team-row",
+            patch_data=updateDeployment(litellm_params=moved_to_vertex),
+            user_api_key_dict=_ADMIN,
+        )
+
+    assert error.value.code == "400"
+    assert error.value.message.startswith("projects video-gen list 'jev-latest' without a positive rpm and tpm quota")
+    prisma.db.litellm_proxymodeltable.update.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_team_model_rename_reads_the_models_from_the_db_once_for_both_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -177,6 +177,7 @@ from litellm.router_strategy.complexity_router import (
     normalize_classification_prompt,
 )
 from litellm.router_strategy.complexity_router.config import resolve_complexity_router_config_write
+from litellm.secret_managers.main import get_secret_str
 from litellm.types.llms.base import LiteLLMBaseModel
 from litellm.types.llms.bedrock import AwsSessionTag
 from litellm.types.proxy.management_endpoints.model_management_endpoints import (
@@ -918,10 +919,15 @@ def _merged_litellm_params(
     return MappingProxyType({key: sent.get(key, stored.get(key)) for key in keys})
 
 
+def _routing_value(value: object) -> object:
+    return get_secret_str(value) if isinstance(value, str) and value.startswith("os.environ/") else value
+
+
 def _written_routing_params(
     incoming: GenericLiteLLMParams | None, existing: GenericLiteLLMParams | None
 ) -> Mapping[str, object]:
-    return _merged_litellm_params(incoming, existing, _ROUTING_KEYS)
+    merged: Final = _merged_litellm_params(incoming, existing, _ROUTING_KEYS)
+    return MappingProxyType({key: _routing_value(value) for key, value in merged.items()})
 
 
 def _quota_policy(general_settings: Mapping[str, object], setting: str) -> ModelQuotaPolicy | None:

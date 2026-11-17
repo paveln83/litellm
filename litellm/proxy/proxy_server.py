@@ -9278,6 +9278,9 @@ class ProxyConfig:
         router: Final = llm_router
         if router is None:
             await self._update_llm_router(new_models=rows, proxy_logging_obj=proxy_logging_obj)
+            built: Final = llm_router
+            if built is not None and not await self._reload_db_router_settings(built, prisma_client):
+                return ModelRoutesReload(routes_current=False)
             return _first_router_reload(rows)
         if not await self._reload_db_router_settings(router, prisma_client):
             return ModelRoutesReload(routes_current=False)

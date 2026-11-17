@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import litellm
 from litellm.litellm_core_utils.credential_accessor import CredentialAccessor
 from litellm.models.model import LiteLLM_ProxyModelTable
+from litellm.proxy import proxy_server
 from litellm.proxy._types import ModelRoutesReload, UnloadedDbModel
 from litellm.proxy.proxy_server import ProxyConfig
 from tests._master_key import MASTER_KEY
@@ -181,13 +182,11 @@ class TestModelRoutesReloadForQuotaChecks:
         monkeypatch.setattr("litellm.proxy.proxy_server.DB_RECONCILE_LOCK", asyncio.Lock())
         monkeypatch.setattr(proxy_config, "get_models_from_db", AsyncMock(return_value=list(db_models)))
         monkeypatch.setattr(proxy_config, "_upsert_db_credentials", AsyncMock(return_value=True))
-        with (
-            patch("litellm.proxy.proxy_server.llm_router", router),
-            patch("litellm.proxy.proxy_server.master_key", MASTER_KEY),
-            patch("litellm.proxy.proxy_server.llm_model_list", []),
-            patch("litellm.proxy.proxy_server.general_settings", {}),
-        ):
-            return await _reconcile(proxy_config, read_router_settings)
+        monkeypatch.setattr("litellm.proxy.proxy_server.llm_router", router)
+        monkeypatch.setattr("litellm.proxy.proxy_server.master_key", MASTER_KEY)
+        monkeypatch.setattr("litellm.proxy.proxy_server.llm_model_list", [])
+        monkeypatch.setattr("litellm.proxy.proxy_server.general_settings", {})
+        return await _reconcile(proxy_config, read_router_settings)
 
     @pytest.mark.asyncio
     async def test_a_moved_model_the_router_rejects_is_reported_while_its_old_route_keeps_serving(
@@ -325,6 +324,39 @@ class TestModelRoutesReloadForQuotaChecks:
                 }
             ),
         )
+
+    @pytest.mark.asyncio
+    async def test_a_worker_building_its_first_router_routes_names_by_the_aliases_the_db_writer_holds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(ProxyConfig, "get_config", AsyncMock(return_value={}))
+        stored_settings: Final = SimpleNamespace(
+            param_name="router_settings", param_value={"model_group_alias": {"clip-studio": "clip-strict"}}
+        )
+
+        outcome: Final = await self._reload(
+            monkeypatch, None, [_db_row("clip-strict", _NEW_ROUTE)], AsyncMock(return_value=stored_settings)
+        )
+
+        built: Final = proxy_server.llm_router
+        assert outcome == ModelRoutesReload(routes_current=True)
+        assert built is not None
+        assert built.registry().resolve("clip-studio") == "clip-strict"
+
+    @pytest.mark.asyncio
+    async def test_a_worker_building_its_first_router_cannot_confirm_routes_while_the_writer_settings_cannot_be_read(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(ProxyConfig, "get_config", AsyncMock(return_value={}))
+
+        outcome: Final = await self._reload(
+            monkeypatch,
+            None,
+            [_db_row("clip-strict", _NEW_ROUTE)],
+            AsyncMock(side_effect=httpx.ConnectError("db unreachable")),
+        )
+
+        assert outcome == ModelRoutesReload(routes_current=False)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
