@@ -320,7 +320,10 @@ class SagemakerError(BaseLLMException):
 
 def client_error(error: Exception, call: Literal["completion", "embedding"]) -> SagemakerError:
     status_code, message = client_error_details(error)
-    return SagemakerError(status_code=status_code, message=with_inference_component_hint(message, call))
+    response_headers: Final = error.response.headers if isinstance(error, httpx.HTTPStatusError) else None
+    return SagemakerError(
+        status_code=status_code, message=with_inference_component_hint(message, call), headers=response_headers
+    )
 
 
 def inference_component_name(params: Mapping[str, object], drop_params: bool) -> str | None | SagemakerError:

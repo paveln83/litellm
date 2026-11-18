@@ -756,6 +756,33 @@ async def test_completion_sagemaker_inference_component_header(
     assert response.choices[0].message.content == "SageMaker reply"
 
 
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("httpx_transport")
+@pytest.mark.usefixtures("fake_provider_credentials")
+@pytest.mark.parametrize("sync_mode", [True, False])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("provider", ["sagemaker", "sagemaker_chat", "sagemaker_nova"])
+async def test_completion_sagemaker_error_keeps_the_aws_request_id_header(
+    respx_mock: respx.MockRouter, sync_mode: bool, stream: bool, provider: str
+) -> None:
+    request_id: Final = "6f2d7a1e-request-id"
+    respx_mock.post(url__startswith=_ENDPOINT_URL).mock(
+        return_value=httpx.Response(
+            403,
+            headers={
+                "x-amzn-RequestId": request_id,
+                "x-amzn-ErrorType": "AccessDeniedException:http://internal.amazon.com/coral/com.amazon.coral.service/",
+            },
+            json={"Message": "User is not authorized to perform: sagemaker:InvokeEndpoint"},
+        )
+    )
+
+    with pytest.raises(litellm.PermissionDeniedError) as exc_info:
+        await _complete_sagemaker(sync_mode, model=f"{provider}/my-endpoint", stream=stream)
+
+    assert httpx.Headers(exc_info.value.litellm_response_headers).get("x-amzn-requestid") == request_id
+
+
 def _sagemaker_error_response(status: int, error_type: str, body: Mapping[str, object]) -> httpx.Response:
     return httpx.Response(
         status,
