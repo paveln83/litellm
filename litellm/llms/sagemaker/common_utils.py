@@ -314,15 +314,25 @@ class SagemakerError(BaseLLMException):
         status_code: int,
         message: str,
         headers: dict | httpx.Headers | None = None,
+        response: httpx.Response | None = None,
     ):
-        super().__init__(status_code=status_code, message=message, headers=headers)
+        super().__init__(status_code=status_code, message=message, headers=headers, response=response)
 
 
 def client_error(error: Exception, call: Literal["completion", "embedding"]) -> SagemakerError:
     status_code, message = client_error_details(error)
-    response_headers: Final = error.response.headers if isinstance(error, httpx.HTTPStatusError) else None
+    hinted_message: Final = with_inference_component_hint(message, call)
+    if not isinstance(error, httpx.HTTPStatusError):
+        return SagemakerError(status_code=status_code, message=hinted_message)
     return SagemakerError(
-        status_code=status_code, message=with_inference_component_hint(message, call), headers=response_headers
+        status_code=status_code,
+        message=hinted_message,
+        headers=error.response.headers,
+        response=httpx.Response(
+            status_code=status_code,
+            headers=error.response.headers,
+            request=httpx.Request(method=error.request.method, url=error.request.url),
+        ),
     )
 
 
